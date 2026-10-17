@@ -1,0 +1,49 @@
+<resources>
+    <string name="app_name">Voice Dictation</string>
+    <string name="tab_settings">Settings</string>
+    <string name="tab_vocabulary">Vocabulary</string>
+    <string name="tab_history">History</string>
+    
+    <string name="model_section_title">Speech Recognition Model</string>
+    <string name="model_parakeet_v2">Parakeet TDT 0.6B v2 (English)</string>
+    <string name="model_parakeet_v2_desc">Fast, highly accurate English model with punctuation and capitalization (~600MB)</string>
+    <string name="model_parakeet_v3">Parakeet TDT 0.6B v3 (Multilingual)</string>
+    <string name="model_parakeet_v3_desc">Supports 25 European languages with punctuation and capitalization (~600MB)</string>
+    
+    <string name="status_not_downloaded">Not Downloaded</string>
+    <string name="status_downloading">Downloading…</string>
+    <string name="status_extracting">Extracting model files…</string>
+    <string name="status_ready">Ready to use</string>
+    
+    <string name="btn_download">Download Model</string>
+    <string name="btn_delete">Delete Model</string>
+    <string name="btn_check_updates">Check for Updates</string>
+    
+    <string name="permissions_title">System Permissions</string>
+    <string name="perm_accessibility">Accessibility Service</string>
+    <string name="perm_accessibility_desc">Required to detect focused text fields and insert dictation</string>
+    <string name="perm_overlay">Display Over Other Apps</string>
+    <string name="perm_overlay_desc">Required to show the floating dictation button</string>
+    <string name="perm_microphone">Microphone Permission</string>
+    <string name="perm_microphone_desc">Required for on-device voice recording</string>
+    <string name="status_enabled">Enabled</string>
+    <string name="status_disabled">Disabled</string>
+    <string name="btn_grant">Grant</string>
+    
+    <string name="preferences_title">Preferences</string>
+    <string name="history_limit_label">History retention limit</string>
+    <string name="overlay_opacity_label">Overlay button opacity</string>
+    <string name="hotwords_score_label">Context biasing bonus score</string>
+    
+    <string name="vocabulary_title">Custom Vocabulary</string>
+    <string name="vocabulary_hint">Add specialized words, names, or technical terms (e.g. Nextcloud, Traefik, Ludo). The Parakeet model will bias recognition toward these terms.</string>
+    <string name="add_word_hint">Enter word or phrase</string>
+    <string name="btn_add">Add</string>
+    <string name="empty_vocabulary">No custom vocabulary added yet. Add hotwords above to bias speech recognition.</string>
+    
+    <string name="history_title">Transcription History</string>
+    <string name="btn_clear_history">Clear History</string>
+    <string name="empty_history">No transcriptions recorded yet. Focus any text field across the system and tap the floating dictation button.</string>
+    
+    <string name="accessibility_service_description">Voice Dictation Accessibility Service detects when text input fields are focused to display the floating dictation button and directly injects recognized speech into the active text field.</string>
+</resources>
