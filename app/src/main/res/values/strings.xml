@@ -9,7 +9,7 @@
     <string name="model_parakeet_v2">Parakeet TDT 0.6B v2 (English)</string>
     <string name="model_parakeet_v2_desc">Fast, highly accurate English model with punctuation and capitalization (~600MB)</string>
     <string name="model_parakeet_v3">Parakeet TDT 0.6B v3 (Multilingual)</string>
-    <string name="model_parakeet_v3_desc">Supports 25 European languages with punctuation and capitalization (~600MB)</string>
+    <string name="model_parakeet_v3_desc">Supports 25 European languages (~600MB). Long internal pauses or quiet/noisy padding can lose speech; use shorter recordings.</string>
     
     <string name="status_not_downloaded">Not Downloaded</string>
     <string name="status_downloading">Downloading…</string>
@@ -38,10 +38,18 @@
     <string name="overlay_scale_label">Floating icon size: %1$d%%</string>
     <string name="overlay_scale_hint">50–150% of the original size. Changes apply immediately. Drag partly beyond any screen edge; a small part stays reachable.</string>
     <string name="vocabulary_spelling_label">Use custom vocabulary spelling</string>
-    <string name="vocabulary_spelling_hint">Only capitalizes or joins/splits spaces in already recognized text with identical letters. Acoustic phrase boosting is disabled for these TDT models because it can cause repetition.</string>
-    
+    <string name="vocabulary_spelling_hint">Spelling only: capitalizes or joins/splits spaces in text with identical recognized letters. Acoustic custom-word recognition is not restored: the bundled decoder can repeat words or lose speech with contextual boosting. Your saved terms are retained.</string>
+
+    <string name="transcript_removal_title">Remove words from final transcript</string>
+    <string name="transcript_removal_hint">Enabled by default for um, uhm and uh. Edit one word or phrase per line, then Save. Matches whole words without case sensitivity, never parts of real words. Only final text changes, across floating, live and file dictation. Clear the list or switch off to keep everything. Settings are read when transcription begins.</string>
+    <string name="transcript_removal_list_hint">Words or phrases to remove (one per line)</string>
+    <string name="transcript_removal_save">Save removal list</string>
+    <string name="transcript_removal_reset">Restore um, uhm, uh</string>
+    <string name="transcript_removal_saved">Removal list saved</string>
+    <string name="transcript_removal_error">Use up to 100 entries, each up to 80 characters: letters, numbers, spaces, apostrophes or hyphens. No regular expressions.</string>
+
     <string name="vocabulary_title">Custom Vocabulary</string>
-    <string name="vocabulary_hint">Add names or technical terms (e.g. Nextcloud, Traefik, Ludo) as optional spelling hints. Only identical recognized letters can be capitalized or regrouped across spaces; hints cannot add words or correct sound-alike recognition.</string>
+    <string name="vocabulary_hint">Acoustic context boosting is currently unavailable because native probes found repetition and lost speech. Saved names and technical terms remain available for optional spelling-only hints; these cannot add words or correct sound-alike recognition. This is not a replacement for acoustic custom-word recognition.</string>
     <string name="add_word_hint">Enter word or phrase</string>
     <string name="btn_add">Add</string>
     <string name="empty_vocabulary">No custom vocabulary added yet. Add optional spelling hints above.</string>

@@ -2,12 +2,13 @@
 
 Live microphone commands are available in Voice Dictation 1.0.4 (versionCode 5).
 File transcription is added in **1.0.5 (versionCode 6)** without changing protocol 1.
-**1.0.7 (versionCode 8)** uses unbiased TDT greedy final decoding in windows of at
-most 20 seconds for both live capture and files, superseding 1.0.6’s single
-full-recording native call. All original PCM is retained; no VAD speech filtering.
-Recording remains capped at 120 seconds; the total IPC deadline is ten minutes.
-Vocabulary is optional spelling-only; unsafe native acoustic bias is disabled.
-See [diagnosis and native verification](asr-regression-1.0.7.md).
+**1.0.8 (versionCode 9)** captures PCM only until explicit STOP, then performs
+exactly one unbiased TDT greedy decode over the complete recording. No streaming,
+VAD, previews, 20-second partitions or concatenated per-window final text.
+At 120 seconds capture closes, but PCM waits for explicit STOP or CANCEL; no
+automatic decode occurs. Completed command-4 files decode directly without waiting.
+The total IPC deadline remains ten minutes. Vocabulary remains optional spelling-only;
+unsafe native acoustic bias stays disabled. See [verification and limitations](record-then-transcribe-1.0.8.md).
 
 ## Setup and security
 
@@ -27,7 +28,7 @@ See [diagnosis and native verification](asr-regression-1.0.7.md).
   are rejected without operating the microphone. Caller identity in the Bundle is
   never trusted.
 - Enable **Enable dictation service** in Voice Dictation Settings and download the
-  selected ASR model (including VAD). Live START additionally requires microphone
+  selected ASR model (encoder/decoder/joiner/tokens only; no VAD). Live START additionally requires microphone
   runtime permission in both apps. File transcription requires **no microphone
   permission** in either phone app and never opens the phone microphone.
   Accessibility and overlay permissions are **not** required for either IPC path.
@@ -43,6 +44,11 @@ No public broadcast, PendingIntent or arbitrary result intent is used. Results g
 only to the supplied Messenger. No external transcription is injected through
 accessibility, copied to the clipboard, or sent to the ordinary overlay callback.
 Successful external transcripts are included in Voice Dictation's local history.
+The final-only removal list applies equally to file/live/overlay output, before
+history and RESULT delivery. It defaults enabled for `um`, `uhm`, `uh` and is editable
+or disableable in Settings. Case-insensitive Unicode whole-word/phrase matching
+never trims substrings of other words. A transcript reduced entirely to fillers
+produces the normal no-speech ERROR, not an empty RESULT.
 
 ## Commands
 
@@ -56,8 +62,8 @@ to the **same callback Messenger** for the session and put these values in `data
 
 | `Message.what` | Name | Behavior |
 | --- | --- | --- |
-| `1` | START | Claims exclusive engine ownership and begins loading/capture. |
-| `2` | STOP | Stops microphone capture and finishes bounded unbiased decoding over all captured PCM; previews are not final. |
+| `1` | START | Claims exclusive ownership and begins PCM-only capture; native model loading is deferred to STOP. |
+| `2` | STOP | Stops capture (or releases cap-wait), loads the model, and runs one unbiased full-recording decode. |
 | `3` | CANCEL | Stops capture and discards all pending transcription; no acknowledgement or final result. |
 | `4` | CMD_TRANSCRIBE_FILE | Claims exclusive ownership and transcribes a completed PCM file asynchronously; no START or STOP is needed. |
 
@@ -68,9 +74,8 @@ and do not alter the existing owner. Unknown commands return ERROR. For malforme
 version/UUID commands, ERROR echoes the supplied session ID (or an empty string
 if absent); no session is created. Commands missing `replyTo` are dropped.
 
-Do not treat STOP as a synchronous result or submit the last partial. STOP during
-loading yields an empty-speech error if no microphone capture began. Repeated
-STOP is safe while processing. Commands after completion are not a new session.
+Do not treat STOP as a synchronous result. Immediate STOP yields an empty-speech
+error if no microphone capture began. Repeated STOP is safe while loading/processing. Commands after completion are not a new session.
 Use a new UUID and a new START when starting again.
 
 ### Completed file transcription (watch → Hermes phone → Voice Dictation)
@@ -134,30 +139,39 @@ be ignored.
 
 | `Message.what` | Name | Additional Bundle key | Meaning |
 | --- | --- | --- | --- |
-| `101` | STATE | `state`: String | `loading`, `recording`, or `processing` |
-| `102` | PARTIAL | `text`: String | Replace the displayed draft (up to the latest 12 seconds); never append or submit it. |
+| `101` | STATE | `state`: String | `recording`, `recording_limit`, `loading`, or `processing` |
+| `102` | PARTIAL | `text`: String | Reserved for protocol compatibility; **never emitted** in 1.0.8. |
 | `103` | RESULT | `text`: String | Nonempty final transcript after final decode and complete engine cleanup. |
 | `104` | ERROR | `error`: String | Human-readable failure, validation error, busy rejection, or timeout. |
 
-Typical flow: START → loading → recording → partials → STOP → processing →
-RESULT (or ERROR). Processing may be repeated; there is no mandatory idle event.
-Some short sessions have no partials. Live previews are throttled (at least two
-seconds between decodes), may disappear after a recoverable preview failure, and
-may differ substantially from the final. They contain only a rolling window, not
-an authoritative full-session transcript. Only RESULT may be submitted. Live PCM,
-including pauses and sub-VAD-window remainders, is retained up to **120 seconds**;
-reaching the cap automatically stops capture and starts finalization without STOP.
-A final decode error produces ERROR, never the last partial or stitched text.
-An empty final transcript is ERROR, not an empty RESULT. Recognition accuracy,
-including silence/noise behavior, is model-dependent and not guaranteed.
+Typical live flow: START → recording → STOP → loading → processing → RESULT/ERROR.
+Cap flow: START → recording → recording_limit → [wait for STOP/CANCEL] → STOP →
+loading → processing → RESULT/ERROR. States may repeat; no mandatory idle event.
+`recording` is sent when the session accepts capture (before microphone startup
+completes); startup failure is terminal ERROR. `recording_limit` means the microphone
+has been stopped/released, original bounded PCM is retained, and **no ASR has run**.
+Clients must map both `recording` and `recording_limit` to their recording/Stop-ready
+state. Show a limit toast for `recording_limit`; keep Stop/Cancel available and do not
+auto-send STOP, submit a draft or start a processing deadline at the cap.
+Only after explicit STOP can `loading`/`processing` occur for live audio. These are
+busy finalization states, not a signal to start the microphone. File command 4 flows
+loading → processing → RESULT/ERROR immediately, without STOP (loading may repeat).
+Only RESULT may be submitted. Every successful PCM read, including pauses and short
+reads, is preserved in order up to **120 seconds** with no added padding.
+A final decode error produces ERROR, never partial or stitched text. An empty final
+transcript is ERROR, not an empty RESULT. Accuracy is not guaranteed: Linux native
+v3 probes returned empty text for short public speech followed by silence to 120s,
+despite recognizing the short clips normally. No vocabulary repetition returned on
+digital silence. This is not proof of Android microphone recognition quality.
 Failures of a running session terminate it; validation errors and busy rejections
 do not cancel the existing session. A maximum **ten minutes from accepted START
 or CMD_TRANSCRIBE_FILE** applies to loading, recording and processing together.
 Timeout emits ERROR, stops capture and discards pending output.
 
 Clients should allow **five minutes after STOP** for authoritative final processing
-(and handle automatic processing at the recording cap). This is a recommended
-client deadline, not a performance guarantee; slower devices can still time out. Do not submit a draft on timeout. Genuine activity
+(or after command 4 for a completed file), while retaining the total ten-minute
+session bound including cap-wait. This is a recommended client deadline, not a
+performance guarantee; slower devices can still time out. Do not submit a draft on timeout. Genuine activity
 backgrounding, unbind and explicit cancellation must still cancel promptly.
 
 Hermes should focus its text composer and START on the first power-long-press;

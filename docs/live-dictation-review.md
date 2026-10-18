@@ -1,8 +1,10 @@
 # Live dictation review — 1.0.6 / code 7
 
-Historical review. The single 120-second native final decode and vocabulary bias
-below are superseded by [1.0.7’s verified ASR regression fix](asr-regression-1.0.7.md).
-PCM ownership, cancellation, shade handling and IPC security remain in place.
+Historical review, not the current behavior contract. Preview/VAD execution and
+windowed decoding are removed in [1.0.8 record-then-transcribe](record-then-transcribe-1.0.8.md).
+Native vocabulary bias stays disabled. At the 120-second capture cap, PCM now waits
+for explicit Stop/Cancel; it never auto-decodes. PCM ownership, cancellation, shade
+handling and IPC security remain in place.
 
 ## Concrete faults found in the previous implementation
 

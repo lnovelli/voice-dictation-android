@@ -26,15 +26,8 @@ class ModelManager(private val context: Context) {
             return dir
         }
 
-    val vadFile: File
-        get() = File(modelsDir, ModelInfo.VAD_FILE_NAME)
-
     fun getModelDir(model: ModelInfo): File {
         return File(modelsDir, model.dirName)
-    }
-
-    fun isVadDownloaded(): Boolean {
-        return vadFile.exists() && vadFile.length() > 100_000
     }
 
     fun isModelDownloaded(model: ModelInfo): Boolean {
@@ -48,8 +41,7 @@ class ModelManager(private val context: Context) {
         return enc.exists() && enc.length() > 1_000_000 &&
                 dec.exists() && dec.length() > 100_000 &&
                 joiner.exists() && joiner.length() > 100_000 &&
-                tokens.exists() && tokens.length() > 100 &&
-                isVadDownloaded()
+                tokens.exists() && tokens.length() > 100
     }
 
     suspend fun downloadModel(
@@ -57,13 +49,8 @@ class ModelManager(private val context: Context) {
         onProgress: (step: String, progress: Int) -> Unit
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            // 1. Download Silero VAD if not already present
-            if (!isVadDownloaded()) {
-                onProgress("Downloading Voice Activity Detector...", 5)
-                downloadFileWithRedirects(ModelInfo.VAD_URL, vadFile) { _, _ -> }
-            }
-
-            // 2. Download model archive
+            // Only the ASR model is needed. Legacy installed VAD files are ignored.
+            // Download model archive
             val archiveFile = File(modelsDir, "${model.dirName}.tar.bz2")
             if (archiveFile.exists()) archiveFile.delete()
 
@@ -75,7 +62,7 @@ class ModelManager(private val context: Context) {
                 onProgress("Downloading ${model.displayName}...", pct)
             }
 
-            // 3. Extract model archive
+            // Extract model archive
             onProgress("Extracting model archive...", 88)
             extractTarBz2(archiveFile, modelsDir)
 

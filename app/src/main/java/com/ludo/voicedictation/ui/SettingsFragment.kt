@@ -19,6 +19,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.ludo.voicedictation.R
 import com.ludo.voicedictation.accessibility.DictationAccessibilityService
 import com.ludo.voicedictation.asr.SpeechEngine
+import com.ludo.voicedictation.asr.TranscriptFilter
 import com.ludo.voicedictation.data.AppPreferences
 import com.ludo.voicedictation.databinding.TabSettingsBinding
 import com.ludo.voicedictation.model.ModelInfo
@@ -76,6 +77,7 @@ class SettingsFragment : Fragment() {
         setupModelSelection()
         setupPermissions()
         setupSliders()
+        setupTranscriptRemoval()
         setupAppUpdates()
     }
 
@@ -284,6 +286,32 @@ class SettingsFragment : Fragment() {
         binding.switchVocabularySpelling.setOnCheckedChangeListener { _, enabled ->
             prefs.vocabularySpellingEnabled = enabled
             speechEngine.reloadVocabulary()
+        }
+    }
+
+    private fun setupTranscriptRemoval() {
+        binding.switchTranscriptRemoval.isChecked = prefs.transcriptRemovalEnabled
+        binding.switchTranscriptRemoval.setOnCheckedChangeListener { _, enabled ->
+            prefs.transcriptRemovalEnabled = enabled
+        }
+        binding.etTranscriptRemovals.setText(prefs.transcriptRemovalWords.joinToString("\n"))
+        binding.btnSaveTranscriptRemovals.setOnClickListener {
+            val lines = binding.etTranscriptRemovals.text.toString().lines().filter { it.isNotBlank() }
+            if (lines.size > TranscriptFilter.MAX_ENTRIES || lines.any {
+                    TranscriptFilter.normalizedEntries(listOf(it)).isEmpty()
+                }) {
+                binding.layoutTranscriptRemovals.error = getString(R.string.transcript_removal_error)
+            } else {
+                binding.layoutTranscriptRemovals.error = null
+                prefs.transcriptRemovalWords = TranscriptFilter.normalizedEntries(lines)
+                binding.etTranscriptRemovals.setText(prefs.transcriptRemovalWords.joinToString("\n"))
+                Toast.makeText(requireContext(), R.string.transcript_removal_saved, Toast.LENGTH_SHORT).show()
+            }
+        }
+        binding.btnResetTranscriptRemovals.setOnClickListener {
+            prefs.transcriptRemovalWords = AppPreferences.DEFAULT_TRANSCRIPT_REMOVALS
+            binding.etTranscriptRemovals.setText(prefs.transcriptRemovalWords.joinToString("\n"))
+            binding.layoutTranscriptRemovals.error = null
         }
     }
 

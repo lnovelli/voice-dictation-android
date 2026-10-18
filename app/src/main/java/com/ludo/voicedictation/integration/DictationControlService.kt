@@ -27,7 +27,7 @@ class DictationControlService : Service() {
         const val CANCEL = 3
         const val CMD_TRANSCRIBE_FILE = 4
         const val STATE = 101
-        const val PARTIAL = 102
+        const val PARTIAL = 102 // Reserved for protocol compatibility; never emitted.
         const val RESULT = 103
         const val ERROR = 104
         const val CONTROL_PERMISSION = "com.ludo.voicedictation.permission.CONTROL_DICTATION"
@@ -171,7 +171,6 @@ class DictationControlService : Service() {
         handler.postDelayed(current.timeout, MAX_SESSION_MS)
         val listener = object : SpeechEngine.ExternalListener {
             override fun onState(state: String) { emit(current, STATE, "state", state) }
-            override fun onPartial(text: String) { emit(current, PARTIAL, "text", text) }
             override fun onFinished(text: String?, error: String?) {
                 if (owner !== current) return
                 // Engine ownership and all async decode/capture work have already finished.

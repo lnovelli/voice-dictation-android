@@ -26,6 +26,9 @@ class AppPreferences(context: Context) {
         private const val KEY_OVERLAY_Y = "overlay_y"
         private const val KEY_VOCABULARY = "vocabulary"
         private const val KEY_HISTORY = "history"
+        private const val KEY_TRANSCRIPT_REMOVAL_ENABLED = "transcript_removal_enabled"
+        private const val KEY_TRANSCRIPT_REMOVAL_WORDS = "transcript_removal_words"
+        val DEFAULT_TRANSCRIPT_REMOVALS: List<String> = listOf("um", "uhm", "uh")
 
         const val MODEL_PARAKEET_V2 = "parakeet_v2"
         const val MODEL_PARAKEET_V3 = "parakeet_v3"
@@ -58,6 +61,16 @@ class AppPreferences(context: Context) {
     var vocabularySpellingEnabled: Boolean
         get() = prefs.getBoolean(KEY_VOCABULARY_SPELLING, true)
         set(value) = prefs.edit().putBoolean(KEY_VOCABULARY_SPELLING, value).apply()
+
+    var transcriptRemovalEnabled: Boolean
+        get() = prefs.getBoolean(KEY_TRANSCRIPT_REMOVAL_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_TRANSCRIPT_REMOVAL_ENABLED, value).apply()
+
+    // Missing key gets conservative defaults; an explicitly empty list stays empty.
+    var transcriptRemovalWords: List<String>
+        get() = (prefs.getString(KEY_TRANSCRIPT_REMOVAL_WORDS, null)
+            ?: DEFAULT_TRANSCRIPT_REMOVALS.joinToString("\n")).lines().filter { it.isNotBlank() }
+        set(value) = prefs.edit().putString(KEY_TRANSCRIPT_REMOVAL_WORDS, value.joinToString("\n")).apply()
 
     var overlayX: Int
         get() = prefs.getInt(KEY_OVERLAY_X, -1)

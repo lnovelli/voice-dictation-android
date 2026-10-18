@@ -50,6 +50,7 @@ class OverlayManager(private val context: Context) {
     private var params: WindowManager.LayoutParams? = null
     private var isAttached = false
     private var pulseAnimator: ObjectAnimator? = null
+    private var cancelGesture: (() -> Unit)? = null
     private val configurationCallbacks = object : ComponentCallbacks {
         override fun onConfigurationChanged(newConfig: Configuration) {
             overlayView?.post { refreshAppearance() }
@@ -67,6 +68,12 @@ class OverlayManager(private val context: Context) {
                 // Run after final insertion, not between state cleanup and delivery.
                 overlayView?.post { onSessionIdle?.invoke() }
             }
+        }
+        speechEngine.onRecordingLimit = {
+            val message = "120-second limit reached. Tap Stop to transcribe, or hold to discard."
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+            overlayView?.announceForAccessibility(message)
+            overlayView?.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
         }
         speechEngine.onFinalResult = { text ->
             onFinalTranscriptionReady?.invoke(text)
@@ -109,6 +116,7 @@ class OverlayManager(private val context: Context) {
     }
 
     fun hide() {
+        cancelGesture?.invoke()
         speechEngine.cancelRecording()
         pulseAnimator?.cancel()
         overlayView?.keepScreenOn = false
@@ -218,60 +226,96 @@ class OverlayManager(private val context: Context) {
         val root = overlayView ?: return
         val lp = params ?: return
         val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
-
         var initialX = 0
         var initialY = 0
         var initialTouchX = 0f
         var initialTouchY = 0f
         var isDragging = false
-
+        var touchActive = false
+        var consumeRelease = false
+        val hold = Runnable {
+            if (touchActive && !isDragging && !consumeRelease) {
+                // Consume UP even though cancellation may immediately make the engine idle.
+                consumeRelease = true
+                root.performLongClick()
+            }
+        }
+        cancelGesture = {
+            root.removeCallbacks(hold)
+            touchActive = false
+            consumeRelease = true
+        }
+        root.isFocusable = true
+        root.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        root.findViewById<View>(R.id.btnOverlayCircle).importantForAccessibility =
+            View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        root.setOnClickListener { onOverlayClicked() }
+        root.setOnLongClickListener {
+            if (speechEngine.isLocalSessionActive && speechEngine.isRecording && !speechEngine.isExternalSessionActive) {
+                speechEngine.cancelRecording()
+                root.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                root.announceForAccessibility("Recording discarded")
+                Toast.makeText(context, "Recording discarded", Toast.LENGTH_SHORT).show()
+                true
+            } else false
+        }
         root.setOnTouchListener { _, event ->
-            when (event.action) {
+            when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    root.removeCallbacks(hold)
                     initialX = lp.x
                     initialY = lp.y
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
                     isDragging = false
+                    touchActive = true
+                    consumeRelease = false
+                    if (speechEngine.isLocalSessionActive && speechEngine.isRecording && !speechEngine.isExternalSessionActive) {
+                        root.postDelayed(hold, ViewConfiguration.getLongPressTimeout().toLong())
+                    }
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - initialTouchX).toInt()
-                    val dy = (event.rawY - initialTouchY).toInt()
-                    if (!isDragging && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
-                        isDragging = true
-                    }
-                    if (isDragging) {
-                        lp.x = initialX + dx
-                        lp.y = initialY + dy
-                        clampPosition()
-                        try {
-                            windowManager.updateViewLayout(overlayView, lp)
-                        } catch (_: Exception) {
+                    if (touchActive && !consumeRelease) {
+                        val dx = event.rawX - initialTouchX
+                        val dy = event.rawY - initialTouchY
+                        if (!isDragging && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
+                            isDragging = true
+                            root.removeCallbacks(hold)
+                        }
+                        if (isDragging) {
+                            lp.x = initialX + dx.toInt()
+                            lp.y = initialY + dy.toInt()
+                            clampPosition()
+                            try { windowManager.updateViewLayout(overlayView, lp) } catch (_: Exception) { }
                         }
                     }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!isDragging) {
-                        // Click event!
-                        onOverlayClicked()
-                    } else {
-                        // Save new position
-                        prefs.overlayX = lp.x
-                        prefs.overlayY = lp.y
+                    root.removeCallbacks(hold)
+                    if (touchActive && !consumeRelease) {
+                        if (isDragging) {
+                            prefs.overlayX = lp.x
+                            prefs.overlayY = lp.y
+                        } else root.performClick()
                     }
+                    touchActive = false
+                    consumeRelease = true
                     true
                 }
-                MotionEvent.ACTION_CANCEL -> {
+                MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_POINTER_DOWN -> {
+                    // Cancel the gesture only, never stop/decode/cancel a recording on touch cancellation.
+                    root.removeCallbacks(hold)
                     if (isDragging) {
                         prefs.overlayX = lp.x
                         prefs.overlayY = lp.y
                     }
-                    isDragging = false
+                    touchActive = false
+                    consumeRelease = true
                     true
                 }
-                else -> false
+                else -> true
             }
         }
     }
@@ -280,13 +324,24 @@ class OverlayManager(private val context: Context) {
         if (!prefs.serviceEnabled || speechEngine.isExternalSessionActive || speechEngine.isProcessing) return
         if (speechEngine.isRecording) {
             speechEngine.stopRecording()
-        } else {
-            speechEngine.startRecording()
+            overlayView?.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+            overlayView?.announceForAccessibility("Recording stopped. Transcribing.")
+        } else if (speechEngine.startRecording()) {
+            overlayView?.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+            overlayView?.announceForAccessibility("Recording. Tap to stop and transcribe. Hold to discard.")
         }
     }
 
     private fun updateOverlayVisuals(isRecording: Boolean, isProcessing: Boolean) {
         val root = overlayView ?: return
+        val localRecording = isRecording && !speechEngine.isExternalSessionActive
+        root.contentDescription = when {
+            speechEngine.isExternalSessionActive -> "Dictation controlled by Hermes"
+            isProcessing -> "Transcribing recording"
+            localRecording && speechEngine.isAwaitingStop -> "Recording limit reached. Tap to transcribe. Hold to discard."
+            localRecording -> "Recording. Tap to stop and transcribe. Hold to discard."
+            else -> "Start dictation recording"
+        }
         root.keepScreenOn = (isRecording || isProcessing) && !speechEngine.isExternalSessionActive &&
             root.visibility == View.VISIBLE
         val btnCircle = root.findViewById<FrameLayout>(R.id.btnOverlayCircle) ?: return
@@ -310,8 +365,13 @@ class OverlayManager(private val context: Context) {
             btnCircle.setBackgroundResource(R.drawable.bg_overlay_recording)
             root.alpha = 1.0f
 
-            pulseRing.visibility = View.VISIBLE
-            startPulseAnimation(pulseRing)
+            if (speechEngine.isAwaitingStop) {
+                pulseAnimator?.cancel()
+                pulseRing.visibility = View.GONE
+            } else {
+                pulseRing.visibility = View.VISIBLE
+                startPulseAnimation(pulseRing)
+            }
         } else {
             pulseAnimator?.cancel()
             pulseRing.visibility = View.GONE
@@ -339,6 +399,8 @@ class OverlayManager(private val context: Context) {
     }
 
     fun destroy() {
+        cancelGesture?.invoke()
+        cancelGesture = null
         if (overlayView != null) context.unregisterComponentCallbacks(configurationCallbacks)
         speechEngine.cancelRecording()
         onFinalTranscriptionReady = null

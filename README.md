@@ -18,15 +18,20 @@ Voice Dictation brings seamless system-wide voice input to any text field across
   - Draggable partly beyond any screen edge, with saved position and a small reachable portion retained.
   - Adjustable floating icon size (50–150%) and opacity, applied immediately from Settings.
   - Hides automatically when focus moves away from text fields.
-- **Accuracy-First Live Dictation:**
-  - Silero VAD gates advisory previews; previews show up to the most recent 12 seconds and may change or omit earlier words.
-  - Tap microphone to record; tap stop for authoritative unbiased TDT greedy decoding in windows of at most 20 seconds. Every captured sample, including pauses and short reads, is retained; VAD segments/previews never supply final text.
-  - Recording automatically stops and finalizes at 120 seconds. Final inference can take substantially longer than previews on slower phones.
+- **Record, Then Transcribe (1.0.8 / build 9):**
+  - Tap microphone to record exact bounded PCM only. No streaming, previews, VAD or native model initialization during recording.
+  - Tap Stop to load the model and run **one unbiased greedy decode of the complete recording**. No 20-second partitioning, per-window concatenation, padding, trimming or partial-result fallback.
+  - Hold the recording button to discard without decoding. Release after a hold cannot restart; dragging cancels the hold timer, and cancelled touch gestures do not stop or discard audio. Accessible click/long-click and haptic cues are provided.
+  - At 120 seconds, microphone capture closes and bounded PCM waits for your explicit Stop or Cancel. A toast explains the limit; Stop stays available. Reaching the cap never initiates transcription.
   - Only the final transcript is inserted into the active focused field (with clipboard fallback); external IPC transcripts are never pasted or copied by the overlay.
-  - Quiet-boundary partitioning bounds native work but may split continuous speech and lose cross-window context. Noise, accent, model/language choice and device constraints can still cause errors; review important text.
+  - Full-context inference can be slow and memory intensive. Accuracy is **not guaranteed**: native v3 probes recognized short English/French clips but returned empty text when the same speech preceded silence to 120 seconds. Silence returned no repeated vocabulary tokens. Review important text; see [verification and limitations](docs/record-then-transcribe-1.0.8.md).
 - **Custom Vocabulary (Optional Spelling Hints):**
   - Add technical terms, names, or specialized acronyms in the dedicated Vocabulary tab.
   - Preserves matching capitalization/spacing only (e.g. “next cloud” → “Nextcloud”), with a Settings switch. It cannot introduce letters, repair sound-alikes or boost acoustic recognition. Native hotword bias is disabled: the bundled decoder can hallucinate repeated vocabulary terms on silence.
+- **Editable Final-Transcript Removal List:**
+  - Enabled by default with conservative fillers `um`, `uhm`, `uh` (not ambiguous `ah`, `like` or `so`). Settings provides a switch, one-word/phrase-per-line editor, Save and Restore Defaults.
+  - Removes literal case-insensitive Unicode whole words/phrases only, never substrings such as `um` inside `album`. Apostrophe/hyphen words and combining marks are protected; punctuation and spacing left by removals are cleaned conservatively.
+  - Applies only after the single final decode, identically to floating/live/file results and history. Disable or save an empty list to preserve text. If everything is removed, normal no-speech ERROR safety applies; no empty result is submitted.
 - **Transcription History:**
   - Automatically stores recent transcriptions with timestamps.
   - Configurable retention limit (default 10, adjustable from 5 to 50).
@@ -37,7 +42,14 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## ASR regression fix in v1.0.7 (build 8)
+## Record-then-transcribe in v1.0.8 (build 9)
+
+- Removes all preview/VAD execution and the VAD download/readiness dependency. Existing ASR installations stay usable; legacy VAD files are harmless and ignored. Readiness requires the selected encoder, decoder, joiner and tokens only.
+- Live model initialization is deferred until explicit Stop; completed command-4 files process directly without waiting or opening the phone microphone.
+- Keeps cancellation/native mutex ownership, shade focus handling, screen-lock safety, scaled/off-screen drag bounds and the ten-minute protected IPC deadline. Cancellation during recording or cap-wait performs zero decoding; an already-running native call cannot be interrupted and its output is discarded.
+- Protocol 1 and event IDs are unchanged. PARTIAL 102 is reserved and **never emitted**. New STATE `recording_limit` means capture ended, retain recording UI and await Stop/Cancel. `loading` can occur after Stop; only RESULT is authoritative.
+
+## ASR regression fix in v1.0.7 (build 8; historical, windowing/previews superseded by 1.0.8)
 
 - Removes vocabulary-triggered beam search from previews and final transcription. Both use the supported NeMo/TDT greedy path, with no hotword file, no token bonus and no blank penalty.
 - Uses fresh final streams of at most 20 seconds, preferring quiet boundaries between 15 and 20 seconds. Preserves all original PCM without VAD filtering, overlap-text deduplication or repetition heuristics.
@@ -45,7 +57,7 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 - Reproduced the old regression using Linux sherpa-onnx **1.13.8**, official public models/audio and digital silence: v2 with hotword `Nextcloud`, score 2.0 generated 421 tokens on 12 seconds of silence; unbiased greedy returned empty text. Both greedy and beam retain TDT durations; the fault is not an RNNT fallback.
 - Build/lint and native speech/silence exercises passed; no Android device was connected. See [source-backed diagnosis, transcripts and limitations](docs/asr-regression-1.0.7.md).
 
-## Accuracy-first live dictation in v1.0.6 (build 7; final decode superseded in 1.0.7)
+## Accuracy-first live dictation in v1.0.6 (build 7; historical, superseded by 1.0.8)
 
 - Retains exact captured PCM independently of VAD, bounded to 120 seconds / 3,840,000 PCM bytes. One full-recording final decode replaces the old stitched-segment finalization; there is no partial-result fallback on final failure.
 - Throttles rolling previews to at least two seconds between decodes, skips stale preview work, and disables previews after a recoverable preview failure without discarding recorded audio.
@@ -64,8 +76,8 @@ accessibility insertion or the floating overlay. In addition to live phone dicta
 Hermes can forward completed watch audio through `CMD_TRANSCRIBE_FILE = 4`: a
 readable file descriptor containing raw 16 kHz mono PCM16LE, up to 120 seconds.
 File transcription needs no phone microphone permission and shares secure exclusive
-ownership/cancellation with live dictation. Since v1.0.7 both paths use bounded,
-unbiased final decoding over all original PCM. Ordinary floating dictation remains independent.
+ownership/cancellation with live dictation. Since v1.0.8 both paths use exactly one
+unbiased full-recording final decode. Ordinary floating dictation remains independent.
 
 ## Overlay customization in v1.0.3
 

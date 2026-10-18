@@ -435,6 +435,62 @@
 
         </LinearLayout>
 
+        <!-- Final-only transcript cleanup, independent from acoustic decoding. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/bg_card"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchTranscriptRemoval"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="48dp"
+                android:text="@string/transcript_removal_title"
+                android:textColor="@color/text_primary" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/transcript_removal_hint"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:layout_marginBottom="8dp" />
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/layoutTranscriptRemovals"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/transcript_removal_list_hint">
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etTranscriptRemovals"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="textMultiLine|textNoSuggestions"
+                    android:gravity="top|start"
+                    android:minLines="3"
+                    android:maxLines="6"
+                    android:maxLength="8192"
+                    android:importantForAutofill="no" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnSaveTranscriptRemovals"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/transcript_removal_save" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnResetTranscriptRemovals"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/transcript_removal_reset" />
+        </LinearLayout>
+
         <!-- In-App Updates Card -->
         <LinearLayout
             android:layout_width="match_parent"

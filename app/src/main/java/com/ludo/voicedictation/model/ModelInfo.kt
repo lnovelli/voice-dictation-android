@@ -12,10 +12,6 @@ data class ModelInfo(
     val tokensFileName: String = "tokens.txt"
 ) {
     companion object {
-        const val VAD_URL =
-            "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
-        const val VAD_FILE_NAME = "silero_vad.onnx"
-
         val PARAKEET_V2 = ModelInfo(
             id = "parakeet_v2",
             displayName = "Parakeet TDT 0.6B v2 (English)",
