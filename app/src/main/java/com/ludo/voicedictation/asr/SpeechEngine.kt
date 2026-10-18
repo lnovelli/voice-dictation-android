@@ -7,6 +7,8 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -31,10 +33,25 @@ class SpeechEngine private constructor(private val context: Context) {
         }
     }
 
-    private class Session {
+    /** All control methods and listener callbacks run on the main thread. */
+    interface ExternalListener {
+        fun onState(state: String)
+        fun onPartial(text: String)
+        // Called only after capture, final decode, native-lock and coroutine cleanup finish.
+        // Both values are null when cancelled. Empty speech is reported as an error.
+        fun onFinished(text: String?, error: String?)
+    }
+
+    private class Session(val owner: Any? = null, val listener: ExternalListener? = null) {
         @Volatile var stopped = false
         @Volatile var cancelled = false
+        var text: String? = null
+        var error: String? = null
     }
+
+    val isExternalSessionActive: Boolean get() = session?.owner != null
+    val isBusy: Boolean get() = session != null || sessionJob?.isActive == true || releaseJob?.isActive == true
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val prefs = AppPreferences(context)
     private val modelManager = ModelManager(context)
@@ -61,35 +78,67 @@ class SpeechEngine private constructor(private val context: Context) {
     fun isModelReady(): Boolean =
         modelManager.isModelDownloaded(ModelInfo.getModelById(prefs.selectedModelId))
 
-    fun startRecording(): Boolean {
-        if (!prefs.serviceEnabled || isProcessing || isRecording || sessionJob?.isActive == true || releaseJob?.isActive == true) return false
+    fun startRecording(): Boolean = startSession(Session())
+
+    /** A private identity token keeps external control separate from the floating overlay. */
+    fun startExternal(owner: Any, listener: ExternalListener): Boolean =
+        startSession(Session(owner, listener))
+
+    private fun startSession(current: Session): Boolean {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        if (!prefs.serviceEnabled || isBusy) return false
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            onError?.invoke("Grant microphone permission in Settings before dictating.")
+            if (current.listener == null) onError?.invoke("Grant microphone permission in Settings before dictating.")
             return false
         }
-        val current = Session()
         session = current
-        setState(false, true)
-        sessionJob = scope.launch {
+        setState(false, true, "loading")
+        val job = scope.launch {
             try {
-                val text = withContext(Dispatchers.Default) {
+                current.text = withContext(Dispatchers.Default) {
                     nativeLock.withLock {
+                        if (current.stopped || current.cancelled || !prefs.serviceEnabled) return@withLock ""
                         initializeEngine()
                         if (current.stopped || current.cancelled || !prefs.serviceEnabled) return@withLock ""
                         recognize(current)
                     }
                 }
-                if (!current.cancelled && prefs.serviceEnabled && text.isNotBlank()) {
-                    prefs.addHistoryItem(text)
-                    onFinalResult?.invoke(text)
-                }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 Log.e(TAG, "Dictation failed", e)
-                if (!current.cancelled) onError?.invoke("Dictation failed: ${e.message}")
-            } finally {
-                session = null
-                setState(false, false)
+                current.error = "Dictation failed: ${e.message}"
+            }
+        }
+        sessionJob = job
+        job.invokeOnCompletion {
+            // Post even when already on Main: ownership cannot be released until the job is complete.
+            mainHandler.post {
+                if (session === current) {
+                    session = null
+                    sessionJob = null
+                    isRecording = false
+                    isProcessing = false
+                    if (current.listener == null) onStateChanged?.invoke(false, false)
+                }
+                if (current.cancelled) {
+                    current.listener?.onFinished(null, null)
+                } else {
+                    val text = current.text?.takeIf { it.isNotBlank() }
+                    val error = current.error ?: when {
+                        !prefs.serviceEnabled -> "Dictation service is disabled."
+                        text == null -> "No speech was recognized."
+                        else -> null
+                    }
+                    if (error == null && text != null) {
+                        prefs.addHistoryItem(text)
+                        if (current.listener != null) current.listener.onFinished(text, null)
+                        else onFinalResult?.invoke(text)
+                    } else if (current.listener != null) {
+                        current.listener.onFinished(null, error)
+                    } else {
+                        onError?.invoke(error ?: "Dictation failed.")
+                    }
+                }
             }
         }
         return true
@@ -235,7 +284,12 @@ class SpeechEngine private constructor(private val context: Context) {
                         lastDecode = SystemClock.elapsedRealtime()
                         if (partial != previousPartial) {
                             previousPartial = partial
-                            withContext(Dispatchers.Main) { if (!current.cancelled && prefs.serviceEnabled) onPartialResult?.invoke(partial) }
+                            withContext(Dispatchers.Main) {
+                                if (!current.cancelled && prefs.serviceEnabled) {
+                                    if (current.listener != null) current.listener.onPartial(partial)
+                                    else onPartialResult?.invoke(partial)
+                                }
+                            }
                         }
                     }
                 }
@@ -271,14 +325,33 @@ class SpeechEngine private constructor(private val context: Context) {
     }
 
     fun stopRecording() {
-        session?.stopped = true
+        val current = session ?: return
+        if (current.owner != null) return
+        stopSession(current)
+    }
+
+    fun stopExternal(owner: Any) {
+        session?.takeIf { it.owner === owner }?.let { stopSession(it) }
+    }
+
+    fun cancelExternal(owner: Any) {
+        session?.takeIf { it.owner === owner }?.let {
+            it.cancelled = true
+            stopSession(it)
+        }
+    }
+
+    private fun stopSession(current: Session) {
+        current.stopped = true
         stopMicrophone()
         if (sessionJob?.isActive == true) setState(false, true)
     }
 
     fun cancelRecording() {
-        session?.cancelled = true
-        stopRecording()
+        val current = session ?: return
+        if (current.owner != null) return
+        current.cancelled = true
+        stopSession(current)
     }
 
     private fun stopMicrophone() {
@@ -295,7 +368,10 @@ class SpeechEngine private constructor(private val context: Context) {
     }
 
     fun releaseEngine(): Job {
-        cancelRecording()
+        session?.let {
+            it.cancelled = true
+            stopSession(it)
+        }
         val running = sessionJob
         return scope.launch {
             running?.join()
@@ -311,9 +387,14 @@ class SpeechEngine private constructor(private val context: Context) {
         loadedSettings = null
     }
 
-    private fun setState(recording: Boolean, processing: Boolean) {
+    private fun setState(recording: Boolean, processing: Boolean, state: String = if (recording) "recording" else "processing") {
         isRecording = recording
         isProcessing = processing
-        onStateChanged?.invoke(recording, processing)
+        val current = session
+        if (current?.listener != null) {
+            if (!current.cancelled) current.listener.onState(state)
+        } else {
+            onStateChanged?.invoke(recording, processing)
+        }
     }
 }

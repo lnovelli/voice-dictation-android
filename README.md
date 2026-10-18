@@ -36,6 +36,12 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
+## Hermes local dictation integration in v1.0.4 (build 5)
+
+Voice Dictation exposes the signature-protected Messenger protocol described in
+[External dictation IPC](docs/external-dictation.md). Hermes can use local ASR without
+accessibility insertion or the floating overlay. Ordinary floating dictation remains independent.
+
 ## Overlay customization in v1.0.3
 
 - Allows partial off-screen dragging on all four edges, including restoring saved negative coordinates.

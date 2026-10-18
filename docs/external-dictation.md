@@ -1,0 +1,117 @@
+# External dictation IPC — protocol 1
+
+Available in Voice Dictation 1.0.4 (versionCode 5).
+
+## Setup and security
+
+- Install Voice Dictation (`com.ludo.voicedictation`) and Hermes
+  (`com.hermes.assistant`) signed with the **same signing certificate**. A mismatched
+  debug/release signing key is rejected, not bypassed.
+- Hermes must request
+  `<uses-permission android:name="com.ludo.voicedictation.permission.CONTROL_DICTATION" />`.
+  Voice Dictation defines that permission with `protectionLevel="signature"` and
+  requires it on the exported service. Request/reinstall as necessary if Android
+  has not granted the custom permission. Hermes should declare a package query for
+  `com.ludo.voicedictation` when discovering availability.
+- Every message independently checks Android's `Message.sendingUid`: its **only**
+  package must be exactly `com.hermes.assistant`, its signature must match Voice
+  Dictation's UID signature, and it must hold `CONTROL_DICTATION`. Shared UIDs,
+  same-key apps with other package names, missing callbacks and unauthorized callers
+  are rejected without operating the microphone. Caller identity in the Bundle is
+  never trusted.
+- Enable **Enable dictation service** in Voice Dictation Settings; download the
+  selected ASR model (including VAD); grant microphone runtime permission to both
+  apps. Accessibility and overlay permissions are **not** required for this IPC path.
+- Bind explicitly to `ComponentName("com.ludo.voicedictation",
+  "com.ludo.voicedictation.integration.DictationControlService")` from a visible
+  Hermes activity. Use `Context.BIND_AUTO_CREATE`, plus
+  `Context.BIND_INCLUDE_CAPABILITIES` on API 30+ so the visible client's microphone
+  capability is propagated to the bound service. This path does not start a
+  foreground service. Hermes must CANCEL and unbind when it backgrounds; permission
+  denial or microphone restrictions are reported as ERROR, never replaced by cloud ASR.
+
+No public broadcast, PendingIntent or arbitrary result intent is used. Results go
+only to the supplied Messenger. No external transcription is injected through
+accessibility, copied to the clipboard, or sent to the ordinary overlay callback.
+Successful external transcripts are included in Voice Dictation's local history.
+
+## Commands
+
+Wrap `onServiceConnected`'s IBinder in `Messenger`. All commands must set `replyTo`
+to the **same callback Messenger** for the session and put these values in `data`:
+
+| Bundle key | Type | Required value |
+| --- | --- | --- |
+| `session_id` | String | New canonical UUID string per session; preserve it exactly on STOP/CANCEL |
+| `protocol_version` | Int | `1` |
+
+| `Message.what` | Name | Behavior |
+| --- | --- | --- |
+| `1` | START | Claims exclusive engine ownership and begins loading/capture. |
+| `2` | STOP | Stops microphone capture, drains queued audio, and finishes final decode. |
+| `3` | CANCEL | Stops capture and discards all pending transcription; no acknowledgement or final result. |
+
+START rejects busy sessions, including ordinary floating dictation; it never
+preempts them. STOP and CANCEL must match the original sending UID, exact
+`session_id`, and callback **Binder identity**. Mismatched commands return ERROR
+and do not alter the existing owner. Unknown commands return ERROR. For malformed
+version/UUID commands, ERROR echoes the supplied session ID (or an empty string
+if absent); no session is created. Commands missing `replyTo` are dropped.
+
+Do not treat STOP as a synchronous result or submit the last partial. STOP during
+loading yields an empty-speech error if no microphone capture began. Repeated
+STOP is safe while processing. Commands after completion are not a new session.
+Use a new UUID and a new START when starting again.
+
+## Events
+
+All events are `Message`s sent to `replyTo`, with `data.session_id` (String) and
+`data.protocol_version` (Int, always `1`). Hermes must filter both fields before
+updating UI or submitting a prompt; callbacks from cancelled/stale sessions must
+be ignored.
+
+| `Message.what` | Name | Additional Bundle key | Meaning |
+| --- | --- | --- | --- |
+| `101` | STATE | `state`: String | `loading`, `recording`, or `processing` |
+| `102` | PARTIAL | `text`: String | Replace the displayed draft; never append or submit it. |
+| `103` | RESULT | `text`: String | Nonempty final transcript after final decode and complete engine cleanup. |
+| `104` | ERROR | `error`: String | Human-readable failure, validation error, busy rejection, or timeout. |
+
+Typical flow: START → loading → recording → partials → STOP → processing →
+RESULT (or ERROR). Processing may be repeated; there is no mandatory idle event.
+Some short sessions have no partials. No-speech results are ERROR, not an empty
+RESULT. Failures of a running session terminate it; validation errors and busy
+rejections do not cancel the existing session. A maximum **five minutes from
+accepted START** applies to loading, recording and processing together. Timeout
+emits ERROR, stops capture and discards pending output.
+
+Hermes should focus its text composer and START on the first power-long-press;
+on the next press, STOP and wait for RESULT, then submit that final text once.
+It can unbind immediately on RESULT or a terminal session ERROR: success is not
+emitted before decoding and cleanup finish. For explicit cancellation, send
+CANCEL with `replyTo` set, clear the client session locally, and unbind without
+waiting for an acknowledgement.
+
+## Lifecycle and overlay coexistence
+
+The service links the callback Binder to death. Callback failure/death, last
+unbind or service destruction cancels capture and suppresses subsequent output.
+Cancellation cannot interrupt a native decode already executing; microphone
+capture stops immediately and engine ownership stays reserved until the async
+job and native cleanup finish. A new START during that drain returns busy.
+The same reservation applies after timeout. The service never cancels the job
+in a way that would release native objects underneath active inference.
+
+External sessions have their own owner token and listener. Overlay hide/destroy,
+accessibility focus changes and overlay taps cannot stop or hijack them. Ordinary
+floating dictation still injects its own final result into the focused field.
+Disabling dictation or explicitly releasing models from Voice Dictation Settings
+cancels an active external session and reports ERROR when the client is connected.
+
+## Verification scope
+
+`./gradlew assembleDebug lintDebug` builds the APK and runs Android static checks.
+No unit tests are created or run for this change. Device-side binding/signature
+rejection, visible-client microphone capability propagation, local-model decoding,
+Binder death, focus changes and power-button flow require verification on an
+Android device with both applications installed and identically signed.

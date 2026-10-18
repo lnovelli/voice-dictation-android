@@ -271,7 +271,7 @@ class OverlayManager(private val context: Context) {
     }
 
     private fun onOverlayClicked() {
-        if (!prefs.serviceEnabled || speechEngine.isProcessing) return
+        if (!prefs.serviceEnabled || speechEngine.isExternalSessionActive || speechEngine.isProcessing) return
         if (speechEngine.isRecording) {
             speechEngine.stopRecording()
         } else {
@@ -288,14 +288,14 @@ class OverlayManager(private val context: Context) {
 
         val alphaVal = prefs.overlayOpacity / 100f
 
-        if (isProcessing) {
+        if (isProcessing && !speechEngine.isExternalSessionActive) {
             pulseAnimator?.cancel()
             pulseRing.visibility = View.GONE
             ivIcon.visibility = View.GONE
             pbProcessing.visibility = View.VISIBLE
             btnCircle.setBackgroundResource(R.drawable.bg_overlay_idle)
             root.alpha = 1.0f
-        } else if (isRecording) {
+        } else if (isRecording && !speechEngine.isExternalSessionActive) {
             pbProcessing.visibility = View.GONE
             ivIcon.visibility = View.VISIBLE
             ivIcon.setImageResource(R.drawable.ic_stop)
