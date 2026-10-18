@@ -9,7 +9,10 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Handler
 import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.system.Os
+import android.system.OsConstants
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.k2fsa.sherpa.onnx.*
@@ -26,6 +29,8 @@ class SpeechEngine private constructor(private val context: Context) {
     companion object {
         private const val TAG = "SpeechEngine"
         private const val SAMPLE_RATE = 16000
+        // 120 seconds of mono, signed 16-bit little-endian raw PCM. No WAV header.
+        private const val MAX_FILE_BYTES = 3_840_000L
         private const val WINDOW_SIZE = 512
         @Volatile private var instance: SpeechEngine? = null
         fun getInstance(context: Context): SpeechEngine = instance ?: synchronized(this) {
@@ -42,11 +47,17 @@ class SpeechEngine private constructor(private val context: Context) {
         fun onFinished(text: String?, error: String?)
     }
 
-    private class Session(val owner: Any? = null, val listener: ExternalListener? = null) {
+    private class Session(
+        val owner: Any? = null,
+        val listener: ExternalListener? = null,
+        val audioFile: ParcelFileDescriptor? = null
+    ) {
         @Volatile var stopped = false
         @Volatile var cancelled = false
         var text: String? = null
         var error: String? = null
+
+        @Synchronized fun closeAudioFile() { runCatching { audioFile?.close() } }
     }
 
     val isExternalSessionActive: Boolean get() = session?.owner != null
@@ -84,10 +95,15 @@ class SpeechEngine private constructor(private val context: Context) {
     fun startExternal(owner: Any, listener: ExternalListener): Boolean =
         startSession(Session(owner, listener))
 
+    /** On success the session owns the descriptor, including cancellation and error cleanup. */
+    fun startExternalFile(owner: Any, listener: ExternalListener, audioFile: ParcelFileDescriptor): Boolean =
+        startSession(Session(owner, listener, audioFile))
+
     private fun startSession(current: Session): Boolean {
         check(Looper.myLooper() == Looper.getMainLooper())
         if (!prefs.serviceEnabled || isBusy) return false
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        if (current.audioFile == null &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             if (current.listener == null) onError?.invoke("Grant microphone permission in Settings before dictating.")
             return false
         }
@@ -95,18 +111,30 @@ class SpeechEngine private constructor(private val context: Context) {
         setState(false, true, "loading")
         val job = scope.launch {
             try {
+                val samples = if (current.audioFile != null) {
+                    withContext(Dispatchers.IO) { readAudioFile(current) }
+                } else null
                 current.text = withContext(Dispatchers.Default) {
                     nativeLock.withLock {
                         if (current.stopped || current.cancelled || !prefs.serviceEnabled) return@withLock ""
                         initializeEngine()
                         if (current.stopped || current.cancelled || !prefs.serviceEnabled) return@withLock ""
-                        recognize(current)
+                        if (samples == null) recognize(current) else {
+                            withContext(Dispatchers.Main) {
+                                if (!current.cancelled) setState(false, true)
+                            }
+                            // A single final pass preserves full context/punctuation and avoids
+                            // repeatedly decoding an ever-growing file (quadratic partial work).
+                            if (current.cancelled || !prefs.serviceEnabled) "" else decode(samples)
+                        }
                     }
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 Log.e(TAG, "Dictation failed", e)
                 current.error = "Dictation failed: ${e.message}"
+            } finally {
+                current.closeAudioFile()
             }
         }
         sessionJob = job
@@ -142,6 +170,41 @@ class SpeechEngine private constructor(private val context: Context) {
             }
         }
         return true
+    }
+
+    /** Bounded positional reads: ignore the sender's seek offset and never open a URI/path. */
+    private fun readAudioFile(current: Session): FloatArray {
+        val file = checkNotNull(current.audioFile)
+        try {
+            if (current.cancelled) return floatArrayOf()
+            val fd = file.fileDescriptor
+            val stat = Os.fstat(fd)
+            require(OsConstants.S_ISREG(stat.st_mode)) { "audio_fd must refer to a regular file, not a pipe or device." }
+            val size = stat.st_size
+            require(size > 0 && size <= MAX_FILE_BYTES && size % 2L == 0L) {
+                "PCM file must have a nonzero even size of at most $MAX_FILE_BYTES bytes (120 seconds)."
+            }
+            val pcm = ByteArray(size.toInt())
+            var offset = 0
+            while (offset < pcm.size) {
+                if (current.cancelled) return floatArrayOf()
+                val count = Os.pread(fd, pcm, offset, minOf(8192, pcm.size - offset), offset.toLong())
+                check(count > 0) { "PCM file was truncated while reading." }
+                offset += count
+            }
+            if (current.cancelled) return floatArrayOf()
+            // Do not silently accept a concurrently grown file or bypass the duration bound.
+            require(Os.fstat(fd).st_size == size && Os.pread(fd, ByteArray(1), 0, 1, size) == 0) {
+                "PCM file changed while reading; send a completed immutable recording."
+            }
+            return FloatArray(pcm.size / 2) { index ->
+                val low = pcm[index * 2].toInt() and 0xff
+                val high = pcm[index * 2 + 1].toInt()
+                ((high shl 8) or low) / 32768f
+            }
+        } finally {
+            current.closeAudioFile()
+        }
     }
 
     // All native creation, decoding and destruction run under nativeLock, never on the UI thread.
@@ -342,6 +405,9 @@ class SpeechEngine private constructor(private val context: Context) {
     }
 
     private fun stopSession(current: Session) {
+        if (current.cancelled) current.closeAudioFile()
+        // A file is already complete: STOP is a safe no-op, only CANCEL discards its result.
+        if (current.audioFile != null) return
         current.stopped = true
         stopMicrophone()
         if (sessionJob?.isActive == true) setState(false, true)

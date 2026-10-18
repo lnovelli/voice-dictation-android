@@ -36,11 +36,16 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Hermes local dictation integration in v1.0.4 (build 5)
+## Hermes local dictation integration in v1.0.5 (build 6)
 
 Voice Dictation exposes the signature-protected Messenger protocol described in
 [External dictation IPC](docs/external-dictation.md). Hermes can use local ASR without
-accessibility insertion or the floating overlay. Ordinary floating dictation remains independent.
+accessibility insertion or the floating overlay. In addition to live phone dictation,
+Hermes can forward completed watch audio through `CMD_TRANSCRIBE_FILE = 4`: a
+readable file descriptor containing raw 16 kHz mono PCM16LE, up to 120 seconds.
+File transcription needs no phone microphone permission, uses a full-context final
+decode, and shares secure exclusive ownership/cancellation with live dictation.
+Ordinary floating dictation remains independent and unchanged.
 
 ## Overlay customization in v1.0.3
 

@@ -10,6 +10,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.Message
 import android.os.Messenger
+import android.os.ParcelFileDescriptor
 import android.os.RemoteException
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -24,6 +25,7 @@ class DictationControlService : Service() {
         const val START = 1
         const val STOP = 2
         const val CANCEL = 3
+        const val CMD_TRANSCRIBE_FILE = 4
         const val STATE = 101
         const val PARTIAL = 102
         const val RESULT = 103
@@ -81,13 +83,20 @@ class DictationControlService : Service() {
             checkPermission(CONTROL_PERMISSION, -1, uid) == PackageManager.PERMISSION_GRANTED
     }
 
+    @Suppress("DEPRECATION") // Inspect the actual type; wrong parcelable types must be rejected safely.
     private fun receive(message: Message) {
-        if (destroyed || !bound || !trusted(message.sendingUid)) return
-        val callback = message.replyTo ?: return
-        // Bad parcelables/types must not crash the service or affect a live session.
+        var audioFile: ParcelFileDescriptor? = null
+        var transferred = false
+        var callback: Messenger? = null
         var id = ""
         try {
             val data = message.data
+            data.classLoader = ParcelFileDescriptor::class.java.classLoader
+            // Extract BEFORE identity/metadata checks so even rejected commands close their FD.
+            audioFile = data.get("audio_fd") as? ParcelFileDescriptor
+            if (destroyed || !bound || !trusted(message.sendingUid)) return
+            callback = message.replyTo ?: return
+            // Bad parcelables/types must not crash the service or affect a live session.
             id = data.getString("session_id") ?: ""
             val validId = id.length == 36 && runCatching {
                 UUID.fromString(id).toString().equals(id, ignoreCase = true)
@@ -98,6 +107,15 @@ class DictationControlService : Service() {
             }
             when (message.what) {
                 START -> start(message.sendingUid, id, callback)
+                CMD_TRANSCRIBE_FILE -> {
+                    if (audioFile == null || data.get("sample_rate") != 16000 ||
+                        data.get("channels") != 1 || data.get("encoding") != "pcm_s16le") {
+                        send(callback, id, ERROR, "error",
+                            "Expected audio_fd, sample_rate 16000, channels 1 and encoding pcm_s16le.")
+                        return
+                    }
+                    transferred = start(message.sendingUid, id, callback, audioFile)
+                }
                 STOP, CANCEL -> {
                     val current = owner
                     if (current == null || current.cancelled || current.uid != message.sendingUid ||
@@ -114,22 +132,25 @@ class DictationControlService : Service() {
             }
         } catch (e: RuntimeException) {
             Log.w(TAG, "Invalid dictation command", e)
-            send(callback, id, ERROR, "error", "Malformed dictation command.")
+            callback?.let { send(it, id, ERROR, "error", "Malformed dictation command.") }
+        } finally {
+            if (!transferred) runCatching { audioFile?.close() }
         }
     }
 
-    private fun start(uid: Int, id: String, callback: Messenger) {
+    /** Returns true only when the engine takes ownership of audioFile (if supplied). */
+    private fun start(uid: Int, id: String, callback: Messenger, audioFile: ParcelFileDescriptor? = null): Boolean {
         val error = when {
             owner != null || engine.isBusy -> "Dictation is busy."
             !prefs.serviceEnabled -> "Enable dictation service in Voice Dictation Settings."
-            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ->
+            audioFile == null && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ->
                 "Grant microphone permission to Voice Dictation."
             !engine.isModelReady() -> "Download the selected model in Voice Dictation Settings."
             else -> null
         }
         if (error != null) {
             send(callback, id, ERROR, "error", error)
-            return
+            return false
         }
         val current = Owner(uid, id, callback)
         current.death = IBinder.DeathRecipient { handler.post { abort(current) } }
@@ -143,11 +164,11 @@ class DictationControlService : Service() {
             callback.binder.linkToDeath(current.death, 0)
             current.linked = true
         } catch (_: RemoteException) {
-            return
+            return false
         }
         owner = current
         handler.postDelayed(current.timeout, MAX_SESSION_MS)
-        val started = engine.startExternal(current.token, object : SpeechEngine.ExternalListener {
+        val listener = object : SpeechEngine.ExternalListener {
             override fun onState(state: String) { emit(current, STATE, "state", state) }
             override fun onPartial(text: String) { emit(current, PARTIAL, "text", text) }
             override fun onFinished(text: String?, error: String?) {
@@ -162,12 +183,15 @@ class DictationControlService : Service() {
                     else send(callback, id, ERROR, "error", error ?: "Dictation was cancelled.")
                 }
             }
-        })
+        }
+        val started = if (audioFile == null) engine.startExternal(current.token, listener)
+            else engine.startExternalFile(current.token, listener, audioFile)
         if (!started) {
             clear(current)
             owner = null
             send(callback, id, ERROR, "error", "Dictation could not start; check permissions and try again.")
         }
+        return started
     }
 
     private fun emit(current: Owner, event: Int, key: String, value: String) {
