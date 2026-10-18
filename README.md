@@ -6,6 +6,10 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
+## ARM64-only packaging in v1.0.9 (build 10)
+
+Removes obsolete 32-bit ARM libraries. Requires a 64-bit ARM Android device; the S25 is supported. Dictation behavior, models, settings and signing identity are unchanged.
+
 ## Features
 
 - **Local & Private Inference:** Runs locally on your Android device using `sherpa-onnx` and ONNX Runtime Mobile with ARM NEON CPU acceleration.
@@ -20,7 +24,7 @@ Voice Dictation brings seamless system-wide voice input to any text field across
   - Hides automatically when focus moves away from text fields.
 - **Record, Then Transcribe (1.0.8 / build 9):**
   - Tap microphone to record exact bounded PCM only. No streaming, previews, VAD or native model initialization during recording.
-  - Tap Stop to load the model and run **one unbiased greedy decode of the complete recording**. No 20-second partitioning, per-window concatenation, padding, trimming or partial-result fallback.
+  - Tap Stop to load the model and run **one unbiased greedy decode of the complete recording**. No 20-second partitioning, per-window concatenation, synthetic padding or partial-result fallback. Final-only exact-zero endpoint trimming preserves every nonzero sample, internal pauses and 500 ms of original margins.
   - Hold the recording button to discard without decoding. Release after a hold cannot restart; dragging cancels the hold timer, and cancelled touch gestures do not stop or discard audio. Accessible click/long-click and haptic cues are provided.
   - At 120 seconds, microphone capture closes and bounded PCM waits for your explicit Stop or Cancel. A toast explains the limit; Stop stays available. Reaching the cap never initiates transcription.
   - Only the final transcript is inserted into the active focused field (with clipboard fallback); external IPC transcripts are never pasted or copied by the overlay.
@@ -126,7 +130,7 @@ To enable system-wide dictation across apps:
 ### Prerequisites
 - JDK 17 or JDK 21
 - Android SDK (API Level 34, Build Tools 34.0.0+)
-- Android NDK (ARM64-v8a / ARMEABI-v7a support)
+- Packaged native ABI: ARM64-v8a only (no 32-bit device support)
 
 ### Build Commands
 ```bash
