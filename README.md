@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.1.1 (build 12; ARM64-only)
+## Current release: v1.1.2 (build 13; ARM64-only)
 
-Adds experimental acoustic hotword decoding to the Vocabulary tab. It is disabled by default; when enabled with eligible terms, it uses sherpa-onnx `modified_beam_search` and model-matched BPE tokenization. Active paths default to 4 (range 2–8); the hotword-score slider defaults to 1.0 (range 1.0–5.0, steps 0.1); blank penalty is fixed at 0.0. Biased decoding can repeat terms or alter/omit unrelated speech; review results and leave the switch off unless testing. The 1.0.9 ARM64-only packaging requirement remains.
+Fixes the floating overlay status during externally owned dictation: recording, loading and processing are now reflected, and the indicator stays visible while the screen is usable. Also includes the experimental Vocabulary-tab hotword controls. Bias is off by default; active paths default to 4 (range 2–8), hotword score defaults to 1.0 (range 1.0–5.0, steps 0.1), and blank penalty is fixed at 0.0. Biased decoding can alter unrelated speech; review results and leave it off unless testing. The 1.0.9 ARM64-only packaging requirement remains.
 
 ## Features
 

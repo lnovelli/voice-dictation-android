@@ -94,6 +94,8 @@ class SpeechEngine private constructor(private val context: Context) {
         private set
     @Volatile var isProcessing = false
         private set
+    @Volatile var currentStatus: String = "ready"
+        private set
     var onStateChanged: ((Boolean, Boolean) -> Unit)? = null
     var onRecordingLimit: (() -> Unit)? = null
     var onFinalResult: ((String) -> Unit)? = null
@@ -166,7 +168,8 @@ class SpeechEngine private constructor(private val context: Context) {
                 isRecording = false
                 isAwaitingStop = false
                 isProcessing = false
-                if (current.listener == null) onStateChanged?.invoke(false, false)
+                currentStatus = "ready"
+                onStateChanged?.invoke(false, false)
                 if (current.cancelled) {
                     current.listener?.onFinished(null, null)
                 } else {
@@ -482,11 +485,11 @@ class SpeechEngine private constructor(private val context: Context) {
         isRecording = recording
         isAwaitingStop = state == "recording_limit"
         isProcessing = processing
+        currentStatus = state
+        onStateChanged?.invoke(recording, processing)
         val current = session
         if (current?.listener != null) {
             if (!current.cancelled) current.listener.onState(state)
-        } else {
-            onStateChanged?.invoke(recording, processing)
         }
     }
 }

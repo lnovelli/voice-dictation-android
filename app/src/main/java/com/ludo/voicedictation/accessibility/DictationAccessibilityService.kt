@@ -82,12 +82,17 @@ class DictationAccessibilityService : AccessibilityService() {
         if (!prefs.serviceEnabled || !isScreenUsable()) {
             lastFocusedNode = null
             overlayManager.hide()
+        } else if (SpeechEngine.getInstance(this).isExternalSessionActive) {
+            // Keep the status indicator visible during an externally owned session, even if
+            // the external app's current window has no focused editable node.
+            overlayManager.show()
         } else {
             handleFocusEvent(rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT))
         }
     }
 
     private fun handleFocusEvent(node: AccessibilityNodeInfo?) {
+        val speechEngine = SpeechEngine.getInstance(this)
         if (!isScreenUsable()) {
             lastFocusedNode = null
             overlayManager.hide()
@@ -102,15 +107,15 @@ class DictationAccessibilityService : AccessibilityService() {
             if (isEditableNode(activeInput)) {
                 lastFocusedNode = activeInput
                 overlayManager.show()
-            } else if (!SpeechEngine.getInstance(this).isLocalSessionActive) {
+            } else if (!speechEngine.isLocalSessionActive && !speechEngine.isExternalSessionActive) {
                 lastFocusedNode = null
                 overlayManager.hide()
             }
             // Expanding notification/quick-settings panels replaces rootInActiveWindow
             // with a non-editable SystemUI window. That is NOT a recording cancel.
-            // Keep the local stop control and original target until completion; normal
-            // idle focus hiding is re-evaluated after final delivery. Explicit hide,
-            // screen-off/lock, interruption and service destruction still cancel.
+            // Keep the active local or external status indicator until completion. Normal idle-focus
+            // hiding is re-evaluated after delivery. Explicit hide/lock removes the local overlay;
+            // external sessions remain owned and cancellable by their IPC client.
         }
     }
 

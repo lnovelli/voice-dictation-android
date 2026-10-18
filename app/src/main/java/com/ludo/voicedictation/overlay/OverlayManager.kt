@@ -9,6 +9,8 @@ import android.content.ComponentCallbacks
 import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.os.Build
+import android.app.KeyguardManager
+import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.view.ContextThemeWrapper
@@ -63,7 +65,8 @@ class OverlayManager(private val context: Context) {
 
     init {
         speechEngine.onStateChanged = { recording, processing ->
-            updateOverlayVisuals(recording, processing)
+            if (speechEngine.isExternalSessionActive && canShowExternalStatus()) show()
+            else updateOverlayVisuals(recording, processing)
             if (!recording && !processing) {
                 // Run after final insertion, not between state cleanup and delivery.
                 overlayView?.post { onSessionIdle?.invoke() }
@@ -85,6 +88,12 @@ class OverlayManager(private val context: Context) {
 
     fun hasOverlayPermission(): Boolean {
         return Settings.canDrawOverlays(context)
+    }
+
+    private fun canShowExternalStatus(): Boolean {
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return false
+        val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager ?: return false
+        return powerManager.isInteractive && !keyguardManager.isKeyguardLocked
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -334,13 +343,18 @@ class OverlayManager(private val context: Context) {
 
     private fun updateOverlayVisuals(isRecording: Boolean, isProcessing: Boolean) {
         val root = overlayView ?: return
-        val localRecording = isRecording && !speechEngine.isExternalSessionActive
+        val externalSession = speechEngine.isExternalSessionActive
         root.contentDescription = when {
-            speechEngine.isExternalSessionActive -> "Dictation controlled by Hermes"
+            externalSession && speechEngine.currentStatus == "loading" -> "Loading model for Hermes dictation"
+            externalSession && speechEngine.currentStatus == "processing" -> "Processing Hermes dictation"
+            externalSession && speechEngine.isAwaitingStop -> "Recording limit reached; stop or cancel in Hermes"
+            externalSession && isRecording -> "Recording controlled by Hermes"
+            externalSession -> "Dictation controlled by Hermes"
+            speechEngine.currentStatus == "loading" -> "Loading recognition model"
             isProcessing -> "Transcribing recording"
-            localRecording && speechEngine.isAwaitingStop -> "Recording limit reached. Tap to transcribe. Hold to discard."
-            localRecording -> "Recording. Tap to stop and transcribe. Hold to discard."
-            else -> "Start dictation recording"
+            speechEngine.isAwaitingStop -> "Recording limit reached. Tap to transcribe. Hold to discard."
+            isRecording -> "Recording. Tap to stop and transcribe. Hold to discard."
+            else -> "Ready to record"
         }
         root.keepScreenOn = (isRecording || isProcessing) && !speechEngine.isExternalSessionActive &&
             root.visibility == View.VISIBLE
@@ -351,17 +365,17 @@ class OverlayManager(private val context: Context) {
 
         val alphaVal = prefs.overlayOpacity / 100f
 
-        if (isProcessing && !speechEngine.isExternalSessionActive) {
+        if (isProcessing) {
             pulseAnimator?.cancel()
             pulseRing.visibility = View.GONE
             ivIcon.visibility = View.GONE
             pbProcessing.visibility = View.VISIBLE
             btnCircle.setBackgroundResource(R.drawable.bg_overlay_idle)
             root.alpha = 1.0f
-        } else if (isRecording && !speechEngine.isExternalSessionActive) {
+        } else if (isRecording) {
             pbProcessing.visibility = View.GONE
             ivIcon.visibility = View.VISIBLE
-            ivIcon.setImageResource(R.drawable.ic_stop)
+            ivIcon.setImageResource(if (externalSession) R.drawable.ic_mic else R.drawable.ic_stop)
             btnCircle.setBackgroundResource(R.drawable.bg_overlay_recording)
             root.alpha = 1.0f
 
