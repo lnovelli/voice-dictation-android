@@ -1,5 +1,9 @@
 # Live dictation review — 1.0.6 / code 7
 
+Historical review. The single 120-second native final decode and vocabulary bias
+below are superseded by [1.0.7’s verified ASR regression fix](asr-regression-1.0.7.md).
+PCM ownership, cancellation, shade handling and IPC security remain in place.
+
 ## Concrete faults found in the previous implementation
 
 - Live final text was `completed.joinToString(" ")` from separate VAD segment decodes. `flush()` did not provide a second full-recording decode. The 350 ms silence boundary / eight-second max-speech segmentation could split a sentence and deprive each decode of preceding/following context.

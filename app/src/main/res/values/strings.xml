@@ -37,13 +37,14 @@
     <string name="overlay_scale_title">Floating icon size</string>
     <string name="overlay_scale_label">Floating icon size: %1$d%%</string>
     <string name="overlay_scale_hint">50–150% of the original size. Changes apply immediately. Drag partly beyond any screen edge; a small part stays reachable.</string>
-    <string name="hotwords_score_label">Context biasing bonus score</string>
+    <string name="vocabulary_spelling_label">Use custom vocabulary spelling</string>
+    <string name="vocabulary_spelling_hint">Only capitalizes or joins/splits spaces in already recognized text with identical letters. Acoustic phrase boosting is disabled for these TDT models because it can cause repetition.</string>
     
     <string name="vocabulary_title">Custom Vocabulary</string>
-    <string name="vocabulary_hint">Add specialized words, names, or technical terms (e.g. Nextcloud, Traefik, Ludo). The Parakeet model will bias recognition toward these terms.</string>
+    <string name="vocabulary_hint">Add names or technical terms (e.g. Nextcloud, Traefik, Ludo) as optional spelling hints. Only identical recognized letters can be capitalized or regrouped across spaces; hints cannot add words or correct sound-alike recognition.</string>
     <string name="add_word_hint">Enter word or phrase</string>
     <string name="btn_add">Add</string>
-    <string name="empty_vocabulary">No custom vocabulary added yet. Add hotwords above to bias speech recognition.</string>
+    <string name="empty_vocabulary">No custom vocabulary added yet. Add optional spelling hints above.</string>
     
     <string name="history_title">Transcription History</string>
     <string name="btn_clear_history">Clear History</string>

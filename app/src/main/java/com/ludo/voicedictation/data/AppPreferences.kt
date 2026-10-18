@@ -21,7 +21,7 @@ class AppPreferences(context: Context) {
         private const val KEY_HISTORY_LIMIT = "history_limit"
         private const val KEY_OVERLAY_OPACITY = "overlay_opacity"
         private const val KEY_OVERLAY_SCALE = "overlay_scale_percent"
-        private const val KEY_HOTWORDS_SCORE = "hotwords_score"
+        private const val KEY_VOCABULARY_SPELLING = "vocabulary_spelling_enabled"
         private const val KEY_OVERLAY_X = "overlay_x"
         private const val KEY_OVERLAY_Y = "overlay_y"
         private const val KEY_VOCABULARY = "vocabulary"
@@ -54,9 +54,10 @@ class AppPreferences(context: Context) {
     val hasOverlayX: Boolean get() = prefs.contains(KEY_OVERLAY_X)
     val hasOverlayY: Boolean get() = prefs.contains(KEY_OVERLAY_Y)
 
-    var hotwordsScore: Float
-        get() = prefs.getFloat(KEY_HOTWORDS_SCORE, 2.0f)
-        set(value) = prefs.edit().putFloat(KEY_HOTWORDS_SCORE, value).apply()
+    // Legacy hotwords_score remains stored but is intentionally never read by ASR.
+    var vocabularySpellingEnabled: Boolean
+        get() = prefs.getBoolean(KEY_VOCABULARY_SPELLING, true)
+        set(value) = prefs.edit().putBoolean(KEY_VOCABULARY_SPELLING, value).apply()
 
     var overlayX: Int
         get() = prefs.getInt(KEY_OVERLAY_X, -1)

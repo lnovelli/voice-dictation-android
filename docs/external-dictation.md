@@ -2,8 +2,12 @@
 
 Live microphone commands are available in Voice Dictation 1.0.4 (versionCode 5).
 File transcription is added in **1.0.5 (versionCode 6)** without changing protocol 1.
-**1.0.6 (versionCode 7)** also uses one full-recording final decode for live capture;
-recording is capped at 120 seconds, and the total IPC deadline is ten minutes.
+**1.0.7 (versionCode 8)** uses unbiased TDT greedy final decoding in windows of at
+most 20 seconds for both live capture and files, superseding 1.0.6’s single
+full-recording native call. All original PCM is retained; no VAD speech filtering.
+Recording remains capped at 120 seconds; the total IPC deadline is ten minutes.
+Vocabulary is optional spelling-only; unsafe native acoustic bias is disabled.
+See [diagnosis and native verification](asr-regression-1.0.7.md).
 
 ## Setup and security
 
@@ -53,7 +57,7 @@ to the **same callback Messenger** for the session and put these values in `data
 | `Message.what` | Name | Behavior |
 | --- | --- | --- |
 | `1` | START | Claims exclusive engine ownership and begins loading/capture. |
-| `2` | STOP | Stops microphone capture and finishes one full-recording final decode; previews are not final. |
+| `2` | STOP | Stops microphone capture and finishes bounded unbiased decoding over all captured PCM; previews are not final. |
 | `3` | CANCEL | Stops capture and discards all pending transcription; no acknowledgement or final result. |
 | `4` | CMD_TRANSCRIBE_FILE | Claims exclusive ownership and transcribes a completed PCM file asynchronously; no START or STOP is needed. |
 
@@ -151,10 +155,9 @@ do not cancel the existing session. A maximum **ten minutes from accepted START
 or CMD_TRANSCRIBE_FILE** applies to loading, recording and processing together.
 Timeout emits ERROR, stops capture and discards pending output.
 
-Clients should allow **five minutes after STOP** for full-context final processing
+Clients should allow **five minutes after STOP** for authoritative final processing
 (and handle automatic processing at the recording cap). This is a recommended
-client deadline, not a performance guarantee; slower devices or high hotword
-cost can still time out. Do not submit a draft on timeout. Genuine activity
+client deadline, not a performance guarantee; slower devices can still time out. Do not submit a draft on timeout. Genuine activity
 backgrounding, unbind and explicit cancellation must still cancel promptly.
 
 Hermes should focus its text composer and START on the first power-long-press;
@@ -176,7 +179,7 @@ in a way that would release native objects underneath active inference.
 
 External sessions have their own owner token and listener. Overlay hide/destroy,
 accessibility focus changes and overlay taps cannot stop or hijack them. Ordinary
-floating dictation inserts only its own full-recording final result into the
+floating dictation inserts only its own authoritative final result into the
 active focused field. Transient focus loss such as opening notifications no longer
 cancels an active floating session. Screen-off/lock, explicit cancellation,
 accessibility interruption/destruction and disabling still cancel local capture;

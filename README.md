@@ -20,13 +20,13 @@ Voice Dictation brings seamless system-wide voice input to any text field across
   - Hides automatically when focus moves away from text fields.
 - **Accuracy-First Live Dictation:**
   - Silero VAD gates advisory previews; previews show up to the most recent 12 seconds and may change or omit earlier words.
-  - Tap microphone to record; tap stop to run one authoritative decode of the entire captured recording, including pauses and short final reads. VAD segments/previews are never stitched into the final transcript.
+  - Tap microphone to record; tap stop for authoritative unbiased TDT greedy decoding in windows of at most 20 seconds. Every captured sample, including pauses and short reads, is retained; VAD segments/previews never supply final text.
   - Recording automatically stops and finalizes at 120 seconds. Final inference can take substantially longer than previews on slower phones.
   - Only the final transcript is inserted into the active focused field (with clipboard fallback); external IPC transcripts are never pasted or copied by the overlay.
-  - Full context is intended to avoid segmentation-related loss, not guarantee correct recognition. Noise, accent, model/language choice, hotword bias, long silence and device constraints can still cause errors; review important text.
-- **Custom Vocabulary (Context Biasing):**
+  - Quiet-boundary partitioning bounds native work but may split continuous speech and lose cross-window context. Noise, accent, model/language choice and device constraints can still cause errors; review important text.
+- **Custom Vocabulary (Optional Spelling Hints):**
   - Add technical terms, names, or specialized acronyms in the dedicated Vocabulary tab.
-  - Applies modified beam search with a configurable hotwords bonus score.
+  - Preserves matching capitalization/spacing only (e.g. “next cloud” → “Nextcloud”), with a Settings switch. It cannot introduce letters, repair sound-alikes or boost acoustic recognition. Native hotword bias is disabled: the bundled decoder can hallucinate repeated vocabulary terms on silence.
 - **Transcription History:**
   - Automatically stores recent transcriptions with timestamps.
   - Configurable retention limit (default 10, adjustable from 5 to 50).
@@ -37,7 +37,15 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Accuracy-first live dictation in v1.0.6 (build 7)
+## ASR regression fix in v1.0.7 (build 8)
+
+- Removes vocabulary-triggered beam search from previews and final transcription. Both use the supported NeMo/TDT greedy path, with no hotword file, no token bonus and no blank penalty.
+- Uses fresh final streams of at most 20 seconds, preferring quiet boundaries between 15 and 20 seconds. Preserves all original PCM without VAD filtering, overlap-text deduplication or repetition heuristics.
+- Keeps existing vocabulary entries, now explicitly optional **spelling-only** hints. Acoustic bias and its unsafe score slider are disabled, not advertised as working.
+- Reproduced the old regression using Linux sherpa-onnx **1.13.8**, official public models/audio and digital silence: v2 with hotword `Nextcloud`, score 2.0 generated 421 tokens on 12 seconds of silence; unbiased greedy returned empty text. Both greedy and beam retain TDT durations; the fault is not an RNNT fallback.
+- Build/lint and native speech/silence exercises passed; no Android device was connected. See [source-backed diagnosis, transcripts and limitations](docs/asr-regression-1.0.7.md).
+
+## Accuracy-first live dictation in v1.0.6 (build 7; final decode superseded in 1.0.7)
 
 - Retains exact captured PCM independently of VAD, bounded to 120 seconds / 3,840,000 PCM bytes. One full-recording final decode replaces the old stitched-segment finalization; there is no partial-result fallback on final failure.
 - Throttles rolling previews to at least two seconds between decodes, skips stale preview work, and disables previews after a recoverable preview failure without discarding recorded audio.
@@ -55,9 +63,9 @@ Voice Dictation exposes the signature-protected Messenger protocol described in
 accessibility insertion or the floating overlay. In addition to live phone dictation,
 Hermes can forward completed watch audio through `CMD_TRANSCRIBE_FILE = 4`: a
 readable file descriptor containing raw 16 kHz mono PCM16LE, up to 120 seconds.
-File transcription needs no phone microphone permission, uses a full-context final
-decode, and shares secure exclusive ownership/cancellation with live dictation.
-Ordinary floating dictation remains independent; v1.0.6 also uses a full-recording final decode for live capture.
+File transcription needs no phone microphone permission and shares secure exclusive
+ownership/cancellation with live dictation. Since v1.0.7 both paths use bounded,
+unbiased final decoding over all original PCM. Ordinary floating dictation remains independent.
 
 ## Overlay customization in v1.0.3
 

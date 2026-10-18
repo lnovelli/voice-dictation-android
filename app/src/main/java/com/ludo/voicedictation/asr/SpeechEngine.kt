@@ -75,7 +75,8 @@ class SpeechEngine private constructor(private val context: Context) {
     private val recorderLock = Any()
     private var recognizer: OfflineRecognizer? = null
     private var vad: Vad? = null
-    private var loadedSettings: Triple<String, Set<String>, Float>? = null
+    private var loadedModelId: String? = null
+    private var spellingHints = RecognitionPolicy.SpellingHints(emptySet())
     private var recorder: AudioRecord? = null
     private var session: Session? = null
     private var sessionJob: Job? = null
@@ -127,9 +128,7 @@ class SpeechEngine private constructor(private val context: Context) {
                             withContext(Dispatchers.Main) {
                                 if (!current.cancelled) setState(false, true)
                             }
-                            // A single final pass preserves full context/punctuation and avoids
-                            // repeatedly decoding an ever-growing file (quadratic partial work).
-                            if (current.cancelled || !prefs.serviceEnabled) "" else decode(samples)
+                            if (current.cancelled || !prefs.serviceEnabled) "" else decodeRecording(samples, current)
                         }
                     }
                 }
@@ -218,18 +217,14 @@ class SpeechEngine private constructor(private val context: Context) {
     // All native creation, decoding and destruction run under nativeLock, never on the UI thread.
     private fun initializeEngine() {
         val model = ModelInfo.getModelById(prefs.selectedModelId)
-        val words = prefs.getVocabulary().toSet()
-        val settings = Triple(model.id, words, prefs.hotwordsScore)
-        if (recognizer != null && loadedSettings == settings) return
+        // Snapshot optional hints even when the acoustic model can be reused.
+        spellingHints = RecognitionPolicy.SpellingHints(
+            if (prefs.vocabularySpellingEnabled) prefs.getVocabulary().toSet() else emptySet()
+        )
+        if (recognizer != null && loadedModelId == model.id) return
         releaseNative()
         check(modelManager.isModelDownloaded(model)) { "Download the selected model in Settings." }
         val dir = modelManager.getModelDir(model)
-        val tokenizer = prepareTokenizer(model, File(dir, model.tokensFileName))
-        val hotwords = File(context.filesDir, "hotwords.txt")
-        require(words.all { it.isNotBlank() && !it.contains('\n') && !it.contains('\r') && !it.contains(':') }) {
-            "Vocabulary entries must be single-line words or phrases without a colon."
-        }
-        if (words.isNotEmpty()) hotwords.writeText(words.sorted().joinToString("\n"), Charsets.UTF_8)
         try {
             recognizer = OfflineRecognizer(null, OfflineRecognizerConfig(
                 featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 128),
@@ -240,12 +235,13 @@ class SpeechEngine private constructor(private val context: Context) {
                         joiner = File(dir, model.joinerFileName).absolutePath
                     ),
                     tokens = File(dir, model.tokensFileName).absolutePath,
-                    numThreads = 2, provider = "cpu", modelType = "nemo_transducer",
-                    modelingUnit = "bpe", bpeVocab = tokenizer.absolutePath
+                    numThreads = 2, provider = "cpu", modelType = "nemo_transducer"
                 ),
-                decodingMethod = if (words.isEmpty()) "greedy_search" else "modified_beam_search",
-                hotwordsFile = if (words.isEmpty()) "" else hotwords.absolutePath,
-                hotwordsScore = settings.third, maxActivePaths = 4
+                // v1.13.8 NeMo beam search adds hotword reward both before top-k
+                // and in ContextGraph; never let vocabulary select that decode path.
+                // TDT greedy uses duration logits, recurrent state and last-token blank.
+                decodingMethod = "greedy_search", hotwordsFile = "",
+                hotwordsScore = 0f, blankPenalty = 0f
             ))
             // VAD is a preview optimization, not a dependency of full-context recognition.
             vad = try { Vad(null, VadModelConfig(
@@ -258,30 +254,22 @@ class SpeechEngine private constructor(private val context: Context) {
                 Log.w(TAG, "VAD initialization failed; previews will be ungated", e)
                 null
             }
-            loadedSettings = settings
-            Log.i(TAG, "Loaded ${model.id}; contextual terms=${words.size}")
+            loadedModelId = model.id
+            Log.i(TAG, "Loaded ${model.id}; unbiased TDT greedy decoder")
         } catch (e: Exception) {
             releaseNative()
             throw e
         }
     }
 
-    private fun prepareTokenizer(model: ModelInfo, tokens: File): File {
-        val content = context.assets.open("tokenizers/${model.id}.vocab").bufferedReader().use { it.readText() }
-        TokenizerValidator.validate(content, tokens.readText())
-        val file = File(context.filesDir, "${model.id}.vocab")
-        file.writeText(content, Charsets.UTF_8)
-        return file
-    }
-
     @SuppressLint("MissingPermission")
     private suspend fun recognize(current: Session): String = coroutineScope {
         // VAD and rolling decodes are advisory only. They never trim the recording,
-        // decide whether a final decode runs, or contribute text to the final result.
+        // decide whether final decoding runs, or contribute text to the final result.
         var detector = vad
         var previewsEnabled = true
         try { detector?.reset() } catch (e: Exception) {
-            Log.w(TAG, "VAD unavailable; continuing with full-recording decode", e)
+            Log.w(TAG, "VAD unavailable; continuing with bounded final decoding", e)
             detector = null
         }
         val minBytes = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -403,7 +391,7 @@ class SpeechEngine private constructor(private val context: Context) {
                     }
                     if (current.cancelled || !prefs.serviceEnabled) "" else {
                         val count = capturedSamples.get()
-                        if (count == 0) "" else decode(FloatArray(count) { recording[it] / 32768f })
+                        if (count == 0) "" else decodeRecording(FloatArray(count) { recording[it] / 32768f }, current)
                     }
                 }
             } finally {
@@ -421,7 +409,24 @@ class SpeechEngine private constructor(private val context: Context) {
         }
     }
 
+    /** Native decode is noninterruptible. Keep nativeLock held and check cancellation
+     * between bounded calls; never publish a partial final transcript on cancellation.
+     */
+    private fun decodeRecording(samples: FloatArray, current: Session): String {
+        val parts = mutableListOf<String>()
+        var start = 0
+        while (start < samples.size) {
+            if (current.cancelled || !prefs.serviceEnabled) return ""
+            val end = RecognitionPolicy.nextEnd(samples, start)
+            parts.add(decode(samples.copyOfRange(start, end)))
+            start = end
+        }
+        if (current.cancelled || !prefs.serviceEnabled) return ""
+        return spellingHints.apply(parts.filter { it.isNotBlank() }.joinToString(" "))
+    }
+
     private fun decode(samples: FloatArray): String {
+        require(samples.size <= RecognitionPolicy.MAX_DECODE_SAMPLES) { "Decode window exceeded." }
         val engine = checkNotNull(recognizer)
         val stream = engine.createStream()
         return try {
@@ -497,7 +502,7 @@ class SpeechEngine private constructor(private val context: Context) {
         val oldVad = vad
         recognizer = null
         vad = null
-        loadedSettings = null
+        loadedModelId = null
         try { oldRecognizer?.release() } finally { oldVad?.release() }
     }
 

@@ -1,0 +1,645 @@
+{
+  "scope": "Linux x86_64 native sherpa-onnx 1.13.8 CPU; not Android hardware; public official models/WAVs and generated digital silence; no private user audio.",
+  "runs": {
+    "greedy": [
+      {
+        "version": "1.13.8",
+        "config": {
+          "encoder": "/root/VoiceDictation/app/build/asr-diagnostics/v2/encoder.int8.onnx",
+          "decoder": "/root/VoiceDictation/app/build/asr-diagnostics/v2/decoder.int8.onnx",
+          "joiner": "/root/VoiceDictation/app/build/asr-diagnostics/v2/joiner.int8.onnx",
+          "tokens": "/root/VoiceDictation/app/build/asr-diagnostics/v2/tokens.txt",
+          "num_threads": 2,
+          "sample_rate": 16000,
+          "feature_dim": 128,
+          "decoding_method": "greedy_search",
+          "max_active_paths": 4,
+          "hotwords_file": "",
+          "hotwords_score": 0,
+          "blank_penalty": 0.0,
+          "model_type": "nemo_transducer",
+          "modeling_unit": "bpe",
+          "bpe_vocab": "",
+          "provider": "cpu"
+        },
+        "load_s": 4.36
+      },
+      {
+        "case": "public_speech",
+        "audio_s": 7.435,
+        "decode_s": 1.991,
+        "text": "Well, I don't wish to see it any more, observed Phebe, turning away her eyes. It is certainly very like the old portrait.",
+        "token_count": 48,
+        "duration_count": 48,
+        "duration_values": [
+          0.0,
+          0.07999999821186066,
+          0.1599999964237213,
+          0.23999999463558197,
+          0.3199999928474426
+        ],
+        "last_timestamp": [
+          7.039999961853027
+        ]
+      },
+      {
+        "case": "silence_12s",
+        "audio_s": 12.0,
+        "decode_s": 1.665,
+        "text": "",
+        "token_count": 0,
+        "duration_count": 0,
+        "duration_values": [],
+        "last_timestamp": []
+      },
+      {
+        "case": "speech_then_silence_20s",
+        "audio_s": 20.0,
+        "decode_s": 2.763,
+        "text": "Well, I don't wish to see it any more, observed Phoebe, turning away her eyes. It is certainly very like the old portrait",
+        "token_count": 49,
+        "duration_count": 49,
+        "duration_values": [
+          0.0,
+          0.07999999821186066,
+          0.1599999964237213,
+          0.23999999463558197
+        ],
+        "last_timestamp": [
+          7.199999809265137
+        ]
+      }
+    ],
+    "beam": [
+      {
+        "version": "1.13.8",
+        "config": {
+          "encoder": "/root/VoiceDictation/app/build/asr-diagnostics/v2/encoder.int8.onnx",
+          "decoder": "/root/VoiceDictation/app/build/asr-diagnostics/v2/decoder.int8.onnx",
+          "joiner": "/root/VoiceDictation/app/build/asr-diagnostics/v2/joiner.int8.onnx",
+          "tokens": "/root/VoiceDictation/app/build/asr-diagnostics/v2/tokens.txt",
+          "num_threads": 2,
+          "sample_rate": 16000,
+          "feature_dim": 128,
+          "decoding_method": "modified_beam_search",
+          "max_active_paths": 4,
+          "hotwords_file": "",
+          "hotwords_score": 0,
+          "blank_penalty": 0.0,
+          "model_type": "nemo_transducer",
+          "modeling_unit": "bpe",
+          "bpe_vocab": "",
+          "provider": "cpu"
+        },
+        "load_s": 3.93
+      },
+      {
+        "case": "public_speech",
+        "audio_s": 7.435,
+        "decode_s": 1.127,
+        "text": "Well, I don't wish to see it any more, observed Phebe, turning away her eyes. It is certainly very like the old portrait.",
+        "token_count": 48,
+        "duration_count": 48,
+        "duration_values": [
+          0.0,
+          0.07999999821186066,
+          0.1599999964237213,
+          0.23999999463558197,
+          0.3199999928474426
+        ],
+        "last_timestamp": [
+          7.039999961853027
+        ]
+      },
+      {
+        "case": "silence_12s",
+        "audio_s": 12.0,
+        "decode_s": 1.765,
+        "text": "",
+        "token_count": 0,
+        "duration_count": 0,
+        "duration_values": [],
+        "last_timestamp": []
+      },
+      {
+        "case": "speech_then_silence_20s",
+        "audio_s": 20.0,
+        "decode_s": 2.85,
+        "text": "Well, I don't wish to see it any more, observed Phebe, turning away her eyes. It is certainly very like the old portrait.",
+        "token_count": 48,
+        "duration_count": 48,
+        "duration_values": [
+          0.0,
+          0.07999999821186066,
+          0.1599999964237213,
+          0.23999999463558197,
+          0.3199999928474426
+        ],
+        "last_timestamp": [
+          7.759999752044678
+        ]
+      }
+    ],
+    "biased2": [
+      {
+        "version": "1.13.8",
+        "config": {
+          "encoder": "/root/VoiceDictation/app/build/asr-diagnostics/v2/encoder.int8.onnx",
+          "decoder": "/root/VoiceDictation/app/build/asr-diagnostics/v2/decoder.int8.onnx",
+          "joiner": "/root/VoiceDictation/app/build/asr-diagnostics/v2/joiner.int8.onnx",
+          "tokens": "/root/VoiceDictation/app/build/asr-diagnostics/v2/tokens.txt",
+          "num_threads": 2,
+          "sample_rate": 16000,
+          "feature_dim": 128,
+          "decoding_method": "modified_beam_search",
+          "max_active_paths": 4,
+          "hotwords_file": "/root/VoiceDictation/app/build/asr-diagnostics/probe-hotwords.txt",
+          "hotwords_score": 2.0,
+          "blank_penalty": 0.0,
+          "model_type": "nemo_transducer",
+          "modeling_unit": "bpe",
+          "bpe_vocab": "app/src/main/assets/tokenizers/parakeet_v2.vocab",
+          "provider": "cpu"
+        },
+        "load_s": 3.975
+      },
+      {
+        "case": "public_speech",
+        "audio_s": 7.435,
+        "decode_s": 1.221,
+        "text": "Well, I don't wish to see it any more, observed Phebe, turning away her eyes. It is certainly very like the old portrait.",
+        "token_count": 48,
+        "duration_count": 48,
+        "duration_values": [
+          0.0,
+          0.07999999821186066,
+          0.1599999964237213,
+          0.23999999463558197,
+          0.3199999928474426
+        ],
+        "last_timestamp": [
+          7.039999961853027
+        ]
+      },
+      {
+        "case": "silence_12s",
+        "audio_s": 12.0,
+        "decode_s": 2.251,
+        "text": "The Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nevada Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud",
+        "token_count": 421,
+        "duration_count": 421,
+        "duration_values": [
+          0.0,
+          0.07999999821186066,
+          0.3199999928474426
+        ],
+        "last_timestamp": [
+          11.75999927520752
+        ]
+      },
+      {
+        "case": "speech_then_silence_20s",
+        "audio_s": 20.0,
+        "decode_s": 3.637,
+        "text": "Well, I don't wish to see it any more, observed Phebe, turning away her eyes. It is certainly very like the old portrait.",
+        "token_count": 48,
+        "duration_count": 48,
+        "duration_values": [
+          0.0,
+          0.07999999821186066,
+          0.1599999964237213,
+          0.23999999463558197,
+          0.3199999928474426
+        ],
+        "last_timestamp": [
+          7.759999752044678
+        ]
+      }
+    ],
+    "v3-greedy-en": [
+      {
+        "version": "1.13.8",
+        "config": {
+          "encoder": "/root/VoiceDictation/app/build/asr-diagnostics/v3/encoder.int8.onnx",
+          "decoder": "/root/VoiceDictation/app/build/asr-diagnostics/v3/decoder.int8.onnx",
+          "joiner": "/root/VoiceDictation/app/build/asr-diagnostics/v3/joiner.int8.onnx",
+          "tokens": "/root/VoiceDictation/app/build/asr-diagnostics/v3/tokens.txt",
+          "num_threads": 2,
+          "sample_rate": 16000,
+          "feature_dim": 128,
+          "decoding_method": "greedy_search",
+          "max_active_paths": 4,
+          "hotwords_file": "",
+          "hotwords_score": 0,
+          "blank_penalty": 0.0,
+          "model_type": "nemo_transducer",
+          "modeling_unit": "bpe",
+          "bpe_vocab": "",
+          "provider": "cpu",
+          "debug": true
+        },
+        "load_s": 3.434
+      },
+      {
+        "case": "public_speech",
+        "audio_s": 3.845083333333333,
+        "decode_s": 0.577,
+        "text": "Ask not what your country can do for you, ask what you can do for your country.",
+        "token_count": 27,
+        "duration_count": 27,
+        "duration_values": [
+          0.07999999821186066,
+          0.1599999964237213,
+          0.23999999463558197
+        ],
+        "last_timestamp": [
+          3.679999828338623
+        ]
+      },
+      {
+        "case": "silence_12s",
+        "audio_s": 12.0,
+        "decode_s": 1.658,
+        "text": "",
+        "token_count": 0,
+        "duration_count": 0,
+        "duration_values": [],
+        "last_timestamp": []
+      },
+      {
+        "case": "speech_then_silence_20s",
+        "audio_s": 20.0,
+        "decode_s": 2.769,
+        "text": "Ask not what your country can do for you, ask what you can do for your country.",
+        "token_count": 27,
+        "duration_count": 27,
+        "duration_values": [
+          0.07999999821186066,
+          0.1599999964237213,
+          0.23999999463558197,
+          0.3199999928474426
+        ],
+        "last_timestamp": [
+          4.319999694824219
+        ]
+      }
+    ],
+    "v3-greedy-fr": [
+      {
+        "version": "1.13.8",
+        "config": {
+          "encoder": "/root/VoiceDictation/app/build/asr-diagnostics/v3/encoder.int8.onnx",
+          "decoder": "/root/VoiceDictation/app/build/asr-diagnostics/v3/decoder.int8.onnx",
+          "joiner": "/root/VoiceDictation/app/build/asr-diagnostics/v3/joiner.int8.onnx",
+          "tokens": "/root/VoiceDictation/app/build/asr-diagnostics/v3/tokens.txt",
+          "num_threads": 2,
+          "sample_rate": 16000,
+          "feature_dim": 128,
+          "decoding_method": "greedy_search",
+          "max_active_paths": 4,
+          "hotwords_file": "",
+          "hotwords_score": 0,
+          "blank_penalty": 0.0,
+          "model_type": "nemo_transducer",
+          "modeling_unit": "bpe",
+          "bpe_vocab": "",
+          "provider": "cpu",
+          "debug": false
+        },
+        "load_s": 3.405
+      },
+      {
+        "case": "public_speech",
+        "audio_s": 4.96907029478458,
+        "decode_s": 0.71,
+        "text": "Ne vous demandez pas ce que votre pays peut faire pour vous. Demandez-vous plutôt ce que vous pouvez faire pour lui.",
+        "token_count": 35,
+        "duration_count": 35,
+        "duration_values": [
+          0.07999999821186066,
+          0.1599999964237213,
+          0.23999999463558197
+        ],
+        "last_timestamp": [
+          4.880000114440918
+        ]
+      },
+      {
+        "case": "silence_12s",
+        "audio_s": 12.0,
+        "decode_s": 1.662,
+        "text": "",
+        "token_count": 0,
+        "duration_count": 0,
+        "duration_values": [],
+        "last_timestamp": []
+      },
+      {
+        "case": "speech_then_silence_20s",
+        "audio_s": 20.0,
+        "decode_s": 2.784,
+        "text": "Ne vous demandez pas ce que votre pays peut faire pour vous. Demandez-vous plutôt ce que vous pouvez faire pour lui.",
+        "token_count": 35,
+        "duration_count": 35,
+        "duration_values": [
+          0.0,
+          0.07999999821186066,
+          0.1599999964237213,
+          0.23999999463558197,
+          0.3199999928474426
+        ],
+        "last_timestamp": [
+          5.440000057220459
+        ]
+      }
+    ],
+    "v3-biased2-fr": [
+      {
+        "version": "1.13.8",
+        "config": {
+          "encoder": "/root/VoiceDictation/app/build/asr-diagnostics/v3/encoder.int8.onnx",
+          "decoder": "/root/VoiceDictation/app/build/asr-diagnostics/v3/decoder.int8.onnx",
+          "joiner": "/root/VoiceDictation/app/build/asr-diagnostics/v3/joiner.int8.onnx",
+          "tokens": "/root/VoiceDictation/app/build/asr-diagnostics/v3/tokens.txt",
+          "num_threads": 2,
+          "sample_rate": 16000,
+          "feature_dim": 128,
+          "decoding_method": "modified_beam_search",
+          "max_active_paths": 4,
+          "hotwords_file": "/root/VoiceDictation/app/build/asr-diagnostics/probe-hotwords.txt",
+          "hotwords_score": 2.0,
+          "blank_penalty": 0.0,
+          "model_type": "nemo_transducer",
+          "modeling_unit": "bpe",
+          "bpe_vocab": "app/src/main/assets/tokenizers/parakeet_v3.vocab",
+          "provider": "cpu",
+          "debug": false
+        },
+        "load_s": 3.895
+      },
+      {
+        "case": "public_speech",
+        "audio_s": 4.96907029478458,
+        "decode_s": 0.774,
+        "text": "Ne vous demandez pas ce que votre pays peut faire pour vous. Demandez-vous plutôt ce que vous pouvez faire pour lui.",
+        "token_count": 35,
+        "duration_count": 35,
+        "duration_values": [
+          0.07999999821186066,
+          0.1599999964237213,
+          0.23999999463558197
+        ],
+        "last_timestamp": [
+          4.880000114440918
+        ]
+      },
+      {
+        "case": "silence_12s",
+        "audio_s": 12.0,
+        "decode_s": 1.743,
+        "text": "",
+        "token_count": 0,
+        "duration_count": 0,
+        "duration_values": [],
+        "last_timestamp": []
+      },
+      {
+        "case": "speech_then_silence_20s",
+        "audio_s": 20.0,
+        "decode_s": 2.901,
+        "text": "Ne vous demandez pas ce que votre pays peut faire pour vous. Demandez-vous plutôt ce que vous pouvez faire pour lui.",
+        "token_count": 35,
+        "duration_count": 35,
+        "duration_values": [
+          0.0,
+          0.07999999821186066,
+          0.1599999964237213,
+          0.23999999463558197,
+          0.3199999928474426
+        ],
+        "last_timestamp": [
+          5.440000057220459
+        ]
+      }
+    ],
+    "v2-greedy-long": [
+      {
+        "version": "1.13.8",
+        "config": {
+          "encoder": "/root/VoiceDictation/app/build/asr-diagnostics/v2/encoder.int8.onnx",
+          "decoder": "/root/VoiceDictation/app/build/asr-diagnostics/v2/decoder.int8.onnx",
+          "joiner": "/root/VoiceDictation/app/build/asr-diagnostics/v2/joiner.int8.onnx",
+          "tokens": "/root/VoiceDictation/app/build/asr-diagnostics/v2/tokens.txt",
+          "num_threads": 2,
+          "sample_rate": 16000,
+          "feature_dim": 128,
+          "decoding_method": "greedy_search",
+          "max_active_paths": 4,
+          "hotwords_file": "",
+          "hotwords_score": 0,
+          "blank_penalty": 0.0,
+          "model_type": "nemo_transducer",
+          "modeling_unit": "bpe",
+          "bpe_vocab": "",
+          "provider": "cpu",
+          "debug": false
+        },
+        "load_s": 3.368
+      },
+      {
+        "case": "silence_120s",
+        "audio_s": 120.0,
+        "decode_s": 22.875,
+        "text": "",
+        "token_count": 0,
+        "duration_count": 0,
+        "duration_values": [],
+        "last_timestamp": []
+      },
+      {
+        "case": "speech_then_silence_120s",
+        "audio_s": 120.0,
+        "decode_s": 23.732,
+        "text": "We didn't wish to see it any more, observed Phoebe, turning away her eyes. It is certainly very like the old portrait.",
+        "token_count": 48,
+        "duration_count": 48,
+        "duration_values": [
+          0.0,
+          0.07999999821186066,
+          0.1599999964237213,
+          0.23999999463558197,
+          0.3199999928474426
+        ],
+        "last_timestamp": [
+          7.359999656677246
+        ]
+      }
+    ],
+    "v2-biased2-long": [
+      {
+        "version": "1.13.8",
+        "config": {
+          "encoder": "/root/VoiceDictation/app/build/asr-diagnostics/v2/encoder.int8.onnx",
+          "decoder": "/root/VoiceDictation/app/build/asr-diagnostics/v2/decoder.int8.onnx",
+          "joiner": "/root/VoiceDictation/app/build/asr-diagnostics/v2/joiner.int8.onnx",
+          "tokens": "/root/VoiceDictation/app/build/asr-diagnostics/v2/tokens.txt",
+          "num_threads": 2,
+          "sample_rate": 16000,
+          "feature_dim": 128,
+          "decoding_method": "modified_beam_search",
+          "max_active_paths": 4,
+          "hotwords_file": "/root/VoiceDictation/app/build/asr-diagnostics/probe-hotwords.txt",
+          "hotwords_score": 2.0,
+          "blank_penalty": 0.0,
+          "model_type": "nemo_transducer",
+          "modeling_unit": "bpe",
+          "bpe_vocab": "app/src/main/assets/tokenizers/parakeet_v2.vocab",
+          "provider": "cpu",
+          "debug": false
+        },
+        "load_s": 3.576
+      },
+      {
+        "case": "silence_120s",
+        "audio_s": 120.0,
+        "decode_s": 23.916,
+        "text": "The Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, and Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, and Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, and Nextcloud, Nextcloud, Nebuchadnezzar, Nextcloud, Nebuchadnezzar, Nextcloud, and Twelve Name, Nebuchadnezzar, Nextcloud, Nextcloud, and Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud, Nextcloud",
+        "token_count": 538,
+        "duration_count": 538,
+        "duration_values": [
+          0.0,
+          0.07999999821186066,
+          0.1599999964237213,
+          0.3199999928474426
+        ],
+        "last_timestamp": [
+          119.68000030517578
+        ]
+      },
+      {
+        "case": "speech_then_silence_120s",
+        "audio_s": 120.0,
+        "decode_s": 23.794,
+        "text": "We didn't wish to see it any more, observed Phoebe, turning away her eyes. It is certainly very like the old portrait.",
+        "token_count": 48,
+        "duration_count": 48,
+        "duration_values": [
+          0.0,
+          0.07999999821186066,
+          0.1599999964237213,
+          0.23999999463558197,
+          0.3199999928474426
+        ],
+        "last_timestamp": [
+          7.359999656677246
+        ]
+      }
+    ],
+    "bounded": [
+      {
+        "start": 0,
+        "end": 318400,
+        "audio_s": 19.9,
+        "decode_s": 2.774,
+        "text": "Well, I don't wish to see it any more, observed Phebe, turning away her eyes. It is certainly very like the old portrait."
+      },
+      {
+        "start": 318400,
+        "end": 636800,
+        "audio_s": 19.9,
+        "decode_s": 2.784,
+        "text": ""
+      },
+      {
+        "start": 636800,
+        "end": 955200,
+        "audio_s": 19.9,
+        "decode_s": 2.712,
+        "text": ""
+      },
+      {
+        "start": 955200,
+        "end": 1273600,
+        "audio_s": 19.9,
+        "decode_s": 2.711,
+        "text": ""
+      },
+      {
+        "start": 1273600,
+        "end": 1592000,
+        "audio_s": 19.9,
+        "decode_s": 2.707,
+        "text": ""
+      },
+      {
+        "start": 1592000,
+        "end": 1886400,
+        "audio_s": 18.4,
+        "decode_s": 2.507,
+        "text": ""
+      },
+      {
+        "start": 1886400,
+        "end": 1920000,
+        "audio_s": 2.1,
+        "decode_s": 0.317,
+        "text": ""
+      },
+      {
+        "final": "Well, I don't wish to see it any more, observed Phebe, turning away her eyes. It is certainly very like the old portrait.",
+        "decode_s": 16.511
+      }
+    ]
+  },
+  "stderr": {
+    "greedy": "",
+    "beam": "",
+    "biased2": "",
+    "v3-greedy-en": "/project/sherpa-onnx/csrc/offline-transducer-nemo-model.cc:InitEncoder:199 ---encoder---\nversion=2\nmodel_author=NeMo\nmodel_type=EncDecRNNTBPEModel\nfeat_dim=128\nurl=https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3\nsubsampling_factor=8\ncomment=Only the transducer branch is exported\npred_hidden=640\npred_rnn_layers=2\nnormalize_type=per_feature\nvocab_size=8192\n\n\n/project/sherpa-onnx/csrc/offline-transducer-nemo-model.cc:InitJoiner:275 TDT model. vocab_size: 8193, num_durations: 5\n/project/sherpa-onnx/csrc/offline-stream.cc:AcceptWaveformImpl:142 Creating a resampler:\n   in_sample_rate: 24000\n   output_sample_rate: 16000\n\n/project/sherpa-onnx/csrc/offline-stream.cc:AcceptWaveformImpl:142 Creating a resampler:\n   in_sample_rate: 24000\n   output_sample_rate: 16000\n\n/project/sherpa-onnx/csrc/offline-stream.cc:AcceptWaveformImpl:142 Creating a resampler:\n   in_sample_rate: 24000\n   output_sample_rate: 16000\n\n",
+    "v3-greedy-fr": "/project/sherpa-onnx/csrc/offline-stream.cc:AcceptWaveformImpl:142 Creating a resampler:\n   in_sample_rate: 22050\n   output_sample_rate: 16000\n\n/project/sherpa-onnx/csrc/offline-stream.cc:AcceptWaveformImpl:142 Creating a resampler:\n   in_sample_rate: 22050\n   output_sample_rate: 16000\n\n/project/sherpa-onnx/csrc/offline-stream.cc:AcceptWaveformImpl:142 Creating a resampler:\n   in_sample_rate: 22050\n   output_sample_rate: 16000\n\n",
+    "v3-biased2-fr": "/project/sherpa-onnx/csrc/offline-stream.cc:AcceptWaveformImpl:142 Creating a resampler:\n   in_sample_rate: 22050\n   output_sample_rate: 16000\n\n/project/sherpa-onnx/csrc/offline-stream.cc:AcceptWaveformImpl:142 Creating a resampler:\n   in_sample_rate: 22050\n   output_sample_rate: 16000\n\n/project/sherpa-onnx/csrc/offline-stream.cc:AcceptWaveformImpl:142 Creating a resampler:\n   in_sample_rate: 22050\n   output_sample_rate: 16000\n\n",
+    "v2-greedy-long": "",
+    "v2-biased2-long": "",
+    "bounded": ""
+  },
+  "compiled_kotlin_partitions": [
+    [
+      0,
+      318400
+    ],
+    [
+      318400,
+      636800
+    ],
+    [
+      636800,
+      955200
+    ],
+    [
+      955200,
+      1273600
+    ],
+    [
+      1273600,
+      1592000
+    ],
+    [
+      1592000,
+      1886400
+    ],
+    [
+      1886400,
+      1920000
+    ]
+  ],
+  "compiled_kotlin_spelling": "spelling: Send Nextcloud to Ludo. Loud, cloud, Nextcloud Nextcloud.\n",
+  "sha256": {
+    "app/libs/sherpa-onnx-1.13.8.aar": "633c24321e06b1fe79feafa03ea16cbc0f8a286641e2da3559bac91bdb13bd96",
+    "app/build/outputs/apk/debug/app-debug.apk": "2560b9095af36203af1324696b95177629120ab8dd84bc7ffe680b41092ac228",
+    "app/build/asr-diagnostics/v2/tokens.txt": "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d",
+    "app/build/asr-diagnostics/v2/test_wavs/0.wav": "5fceacff0315d49cb59fcc505bcecf1ed5f2f35c2897b1e65a59f30e5d922150",
+    "app/build/asr-diagnostics/v3/tokens.txt": "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
+    "app/build/asr-diagnostics/v3/test_wavs/en.wav": "148b936b43ce7c546a866e64da059f0458aee2d65e617f16e9d94f06e8d99ed6",
+    "app/build/asr-diagnostics/v3/test_wavs/fr.wav": "b59be4349b92d344fb903677165eaf4694025d1ab119c608726ecbcb3164b528"
+  }
+}

@@ -280,12 +280,9 @@ class SettingsFragment : Fragment() {
             }
         }
 
-        // Hotwords score
-        binding.sliderHotwordsScore.value = prefs.hotwordsScore
-        binding.tvHotwordsScoreLabel.text = "Context biasing score: ${String.format("%.1f", prefs.hotwordsScore)}"
-        binding.sliderHotwordsScore.addOnChangeListener { _, value, _ ->
-            prefs.hotwordsScore = value
-            binding.tvHotwordsScoreLabel.text = "Context biasing score: ${String.format("%.1f", value)}"
+        binding.switchVocabularySpelling.isChecked = prefs.vocabularySpellingEnabled
+        binding.switchVocabularySpelling.setOnCheckedChangeListener { _, enabled ->
+            prefs.vocabularySpellingEnabled = enabled
             speechEngine.reloadVocabulary()
         }
     }
