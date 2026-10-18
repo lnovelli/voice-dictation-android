@@ -58,10 +58,15 @@ class OverlayManager(private val context: Context) {
     }
 
     var onFinalTranscriptionReady: ((String) -> Unit)? = null
+    var onSessionIdle: (() -> Unit)? = null
 
     init {
         speechEngine.onStateChanged = { recording, processing ->
             updateOverlayVisuals(recording, processing)
+            if (!recording && !processing) {
+                // Run after final insertion, not between state cleanup and delivery.
+                overlayView?.post { onSessionIdle?.invoke() }
+            }
         }
         speechEngine.onFinalResult = { text ->
             onFinalTranscriptionReady?.invoke(text)
@@ -106,6 +111,7 @@ class OverlayManager(private val context: Context) {
     fun hide() {
         speechEngine.cancelRecording()
         pulseAnimator?.cancel()
+        overlayView?.keepScreenOn = false
         overlayView?.visibility = View.GONE
     }
 
@@ -281,6 +287,8 @@ class OverlayManager(private val context: Context) {
 
     private fun updateOverlayVisuals(isRecording: Boolean, isProcessing: Boolean) {
         val root = overlayView ?: return
+        root.keepScreenOn = (isRecording || isProcessing) && !speechEngine.isExternalSessionActive &&
+            root.visibility == View.VISIBLE
         val btnCircle = root.findViewById<FrameLayout>(R.id.btnOverlayCircle) ?: return
         val ivIcon = root.findViewById<ImageView>(R.id.ivOverlayIcon) ?: return
         val pbProcessing = root.findViewById<ProgressBar>(R.id.pbOverlayProcessing) ?: return
@@ -334,6 +342,8 @@ class OverlayManager(private val context: Context) {
         if (overlayView != null) context.unregisterComponentCallbacks(configurationCallbacks)
         speechEngine.cancelRecording()
         onFinalTranscriptionReady = null
+        onSessionIdle = null
+        overlayView?.keepScreenOn = false
         pulseAnimator?.cancel()
         if (isAttached && overlayView != null) {
             try {

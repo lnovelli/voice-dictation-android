@@ -32,6 +32,9 @@ class SpeechEngine private constructor(private val context: Context) {
         // 120 seconds of mono, signed 16-bit little-endian raw PCM. No WAV header.
         private const val MAX_FILE_BYTES = 3_840_000L
         private const val WINDOW_SIZE = 512
+        private const val MAX_LIVE_SAMPLES = SAMPLE_RATE * 120
+        private const val PREVIEW_SAMPLES = SAMPLE_RATE * 12
+        private const val PREVIEW_INTERVAL_MS = 2_000L
         @Volatile private var instance: SpeechEngine? = null
         fun getInstance(context: Context): SpeechEngine = instance ?: synchronized(this) {
             instance ?: SpeechEngine(context.applicationContext).also { instance = it }
@@ -61,6 +64,7 @@ class SpeechEngine private constructor(private val context: Context) {
     }
 
     val isExternalSessionActive: Boolean get() = session?.owner != null
+    val isLocalSessionActive: Boolean get() = session?.let { it.owner == null && !it.cancelled } == true
     val isBusy: Boolean get() = session != null || sessionJob?.isActive == true || releaseJob?.isActive == true
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -130,7 +134,10 @@ class SpeechEngine private constructor(private val context: Context) {
                     }
                 }
             } catch (e: Exception) {
-                if (e is CancellationException) throw e
+                if (e is CancellationException) {
+                    current.cancelled = true
+                    throw e
+                }
                 Log.e(TAG, "Dictation failed", e)
                 current.error = "Dictation failed: ${e.message}"
             } finally {
@@ -138,16 +145,17 @@ class SpeechEngine private constructor(private val context: Context) {
             }
         }
         sessionJob = job
-        job.invokeOnCompletion {
+        job.invokeOnCompletion { cause ->
+            // No unexpected coroutine/native failure may publish an earlier draft as success.
+            if (cause != null && !current.cancelled) current.error = "Dictation failed: ${cause.message}"
             // Post even when already on Main: ownership cannot be released until the job is complete.
             mainHandler.post {
-                if (session === current) {
-                    session = null
-                    sessionJob = null
-                    isRecording = false
-                    isProcessing = false
-                    if (current.listener == null) onStateChanged?.invoke(false, false)
-                }
+                if (session !== current) return@post
+                session = null
+                sessionJob = null
+                isRecording = false
+                isProcessing = false
+                if (current.listener == null) onStateChanged?.invoke(false, false)
                 if (current.cancelled) {
                     current.listener?.onFinished(null, null)
                 } else {
@@ -212,7 +220,7 @@ class SpeechEngine private constructor(private val context: Context) {
         val model = ModelInfo.getModelById(prefs.selectedModelId)
         val words = prefs.getVocabulary().toSet()
         val settings = Triple(model.id, words, prefs.hotwordsScore)
-        if (recognizer != null && vad != null && loadedSettings == settings) return
+        if (recognizer != null && loadedSettings == settings) return
         releaseNative()
         check(modelManager.isModelDownloaded(model)) { "Download the selected model in Settings." }
         val dir = modelManager.getModelDir(model)
@@ -239,13 +247,17 @@ class SpeechEngine private constructor(private val context: Context) {
                 hotwordsFile = if (words.isEmpty()) "" else hotwords.absolutePath,
                 hotwordsScore = settings.third, maxActivePaths = 4
             ))
-            vad = Vad(null, VadModelConfig(
+            // VAD is a preview optimization, not a dependency of full-context recognition.
+            vad = try { Vad(null, VadModelConfig(
                 sileroVadModelConfig = SileroVadModelConfig(
                     model = modelManager.vadFile.absolutePath, threshold = 0.5f,
                     minSilenceDuration = 0.35f, minSpeechDuration = 0.2f,
                     windowSize = WINDOW_SIZE, maxSpeechDuration = 8f
                 ), sampleRate = SAMPLE_RATE, numThreads = 1, provider = "cpu"
-            ))
+            )) } catch (e: Exception) {
+                Log.w(TAG, "VAD initialization failed; previews will be ungated", e)
+                null
+            }
             loadedSettings = settings
             Log.i(TAG, "Loaded ${model.id}; contextual terms=${words.size}")
         } catch (e: Exception) {
@@ -264,13 +276,25 @@ class SpeechEngine private constructor(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private suspend fun recognize(current: Session): String = coroutineScope {
-        val detector = checkNotNull(vad)
-        detector.reset()
+        // VAD and rolling decodes are advisory only. They never trim the recording,
+        // decide whether a final decode runs, or contribute text to the final result.
+        var detector = vad
+        var previewsEnabled = true
+        try { detector?.reset() } catch (e: Exception) {
+            Log.w(TAG, "VAD unavailable; continuing with full-recording decode", e)
+            detector = null
+        }
         val minBytes = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         check(minBytes > 0) { "Microphone format is unsupported ($minBytes)." }
+        // Preserve the exact PCM, including pauses and the final short read. Only
+        // preview frames are zero-padded. Fixed capacity: 120 s / 3,840,000 PCM bytes.
+        val recording = ShortArray(MAX_LIVE_SAMPLES)
+        val capturedSamples = java.util.concurrent.atomic.AtomicInteger()
+        // Enough for the ENTIRE bounded recording even if one preview is very slow.
+        // Unlike the old 10-second queue, slow inference cannot discard final audio.
+        val frames = Channel<FloatArray>(MAX_LIVE_SAMPLES / WINDOW_SIZE + 1)
         val audio = AudioRecord(MediaRecorder.AudioSource.MIC, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT, maxOf(minBytes * 4, SAMPLE_RATE * 2))
-        val frames = Channel<FloatArray>(320)
         try {
             synchronized(recorderLock) {
                 check(audio.state == AudioRecord.STATE_INITIALIZED) { "Microphone could not be initialized." }
@@ -284,84 +308,104 @@ class SpeechEngine private constructor(private val context: Context) {
             withContext(Dispatchers.Main) {
                 if (!current.stopped && !current.cancelled) setState(true, false)
             }
-            // Capture continues while inference runs; a bounded queue fails explicitly if inference cannot keep up.
             val capture = launch(Dispatchers.IO) {
                 try {
                     val pcm = ShortArray(WINDOW_SIZE)
                     var filled = 0
-                    while (!current.stopped && !current.cancelled) {
-                        val count = audio.read(pcm, filled, WINDOW_SIZE - filled)
+                    var total = 0
+                    while (!current.stopped && !current.cancelled && total < MAX_LIVE_SAMPLES) {
+                        val count = audio.read(pcm, filled, minOf(WINDOW_SIZE - filled, MAX_LIVE_SAMPLES - total))
                         if (current.cancelled) break
                         if (count <= 0 && current.stopped) break
                         check(count > 0) { "Microphone read failed ($count)." }
+                        pcm.copyInto(recording, total, filled, filled + count)
+                        total += count
+                        capturedSamples.set(total)
                         filled += count
                         if (filled == WINDOW_SIZE) {
-                            val frame = FloatArray(WINDOW_SIZE) { pcm[it] / 32768f }
-                            check(frames.trySend(frame).isSuccess) { "Inference cannot keep up with recording. Stop and try shorter dictation or fewer vocabulary terms." }
+                            check(frames.trySend(FloatArray(WINDOW_SIZE) { pcm[it] / 32768f }).isSuccess) {
+                                "Bounded preview audio queue failed."
+                            }
                             filled = 0
                         }
                     }
                     if (filled > 0 && !current.cancelled) {
-                        check(frames.trySend(FloatArray(WINDOW_SIZE) { if (it < filled) pcm[it] / 32768f else 0f }).isSuccess) { "Audio queue is full." }
+                        check(frames.trySend(FloatArray(WINDOW_SIZE) { if (it < filled) pcm[it] / 32768f else 0f }).isSuccess) {
+                            "Bounded preview audio queue failed."
+                        }
                     }
                     frames.close()
                 } catch (e: Exception) {
                     frames.close(e)
                 } finally {
+                    current.stopped = true
                     synchronized(recorderLock) {
                         if (recorder === audio) recorder = null
                         if (audio.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                             try { audio.stop() } catch (e: IllegalStateException) { Log.w(TAG, "Microphone cleanup failed", e) }
                         }
                     }
+                    withContext(NonCancellable + Dispatchers.Main) {
+                        if (session === current && !current.cancelled) setState(false, true)
+                    }
                 }
             }
             try {
-                val pending = SampleWindow(SAMPLE_RATE * 10)
-                val completed = mutableListOf<String>()
+                val pending = SampleWindow(PREVIEW_SAMPLES)
+                var consumed = 0
                 var lastDecode = SystemClock.elapsedRealtime()
-                var active = false
                 var previousPartial = ""
-                suspend fun consumeSegments() {
-                    while (!detector.empty()) {
-                        val segment = detector.front()
-                        detector.pop()
-                        if (!current.cancelled) {
-                            val text = decode(segment.samples)
-                            if (text.isNotBlank()) completed.add(text)
-                        }
-                        pending.discardBefore(segment.start.toLong() + segment.samples.size)
-                        active = false
-                    }
-                }
                 for (frame in frames) {
                     if (current.cancelled) break
+                    consumed += frame.size
+                    pending.keepLast(PREVIEW_SAMPLES - frame.size)
                     pending.append(frame)
-                    detector.acceptWaveform(frame)
-                    consumeSegments()
-                    if (detector.isSpeechDetected()) active = true
-                    if (!active) pending.keepLast(SAMPLE_RATE / 2)
-                    val now = SystemClock.elapsedRealtime()
-                    if (active && !current.stopped && now - lastDecode >= 750 && pending.size >= SAMPLE_RATE / 2) {
-                        val partial = (completed + decode(pending.snapshot())).filter { it.isNotBlank() }.joinToString(" ")
-                        lastDecode = SystemClock.elapsedRealtime()
-                        if (partial != previousPartial) {
-                            previousPartial = partial
-                            withContext(Dispatchers.Main) {
-                                if (!current.cancelled && prefs.serviceEnabled) {
-                                    if (current.listener != null) current.listener.onPartial(partial)
-                                    else onPartialResult?.invoke(partial)
+                    if (!previewsEnabled || current.stopped) continue
+                    try {
+                        val previewVad = detector
+                        previewVad?.acceptWaveform(frame)
+                        // Pop every completed segment to bound native VAD storage. No stitching.
+                        var endedSpeech = false
+                        if (previewVad != null) {
+                            while (!previewVad.empty()) {
+                                endedSpeech = true
+                                previewVad.pop()
+                            }
+                        }
+                        val now = SystemClock.elapsedRealtime()
+                        if ((previewVad == null || endedSpeech || previewVad.isSpeechDetected()) &&
+                            now - lastDecode >= PREVIEW_INTERVAL_MS && pending.size >= SAMPLE_RATE / 2 &&
+                            consumed >= capturedSamples.get() - WINDOW_SIZE * 2) {
+                            val partial = decode(pending.snapshot())
+                            lastDecode = SystemClock.elapsedRealtime()
+                            if (partial.isNotBlank() && partial != previousPartial) {
+                                previousPartial = partial
+                                withContext(Dispatchers.Main) {
+                                    if (!current.cancelled && !current.stopped && prefs.serviceEnabled) {
+                                        if (current.listener != null) current.listener.onPartial(partial)
+                                        else onPartialResult?.invoke(partial)
+                                    }
                                 }
                             }
                         }
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        // An advisory preview failure must not substitute a stitched result
+                        // or discard otherwise valid captured PCM. Try the final decode once.
+                        Log.w(TAG, "Streaming preview disabled for this recording", e)
+                        previewsEnabled = false
                     }
                 }
-                if (!current.cancelled) {
-                    withContext(Dispatchers.Main) { setState(false, true) }
-                    detector.flush()
-                    consumeSegments()
+                capture.join() // Publish all PCM writes before the authoritative snapshot.
+                if (current.cancelled || !prefs.serviceEnabled) "" else {
+                    withContext(Dispatchers.Main) {
+                        if (!current.cancelled) setState(false, true)
+                    }
+                    if (current.cancelled || !prefs.serviceEnabled) "" else {
+                        val count = capturedSamples.get()
+                        if (count == 0) "" else decode(FloatArray(count) { recording[it] / 32768f })
+                    }
                 }
-                completed.joinToString(" ")
             } finally {
                 current.stopped = true
                 stopMicrophone()
@@ -373,7 +417,7 @@ class SpeechEngine private constructor(private val context: Context) {
                 if (recorder === audio) recorder = null
                 audio.release()
             }
-            detector.reset()
+            try { detector?.reset() } catch (e: Exception) { Log.w(TAG, "VAD reset failed", e) }
         }
     }
 
@@ -438,6 +482,7 @@ class SpeechEngine private constructor(private val context: Context) {
             it.cancelled = true
             stopSession(it)
         }
+        releaseJob?.takeIf { it.isActive }?.let { return it }
         val running = sessionJob
         return scope.launch {
             running?.join()
@@ -446,11 +491,14 @@ class SpeechEngine private constructor(private val context: Context) {
     }
 
     private fun releaseNative() {
-        recognizer?.release()
+        // Detach before destruction: even a native release exception cannot leave a
+        // stale object available for a later session or a second release.
+        val oldRecognizer = recognizer
+        val oldVad = vad
         recognizer = null
-        vad?.release()
         vad = null
         loadedSettings = null
+        try { oldRecognizer?.release() } finally { oldVad?.release() }
     }
 
     private fun setState(recording: Boolean, processing: Boolean, state: String = if (recording) "recording" else "processing") {

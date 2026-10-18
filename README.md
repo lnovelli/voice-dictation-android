@@ -18,11 +18,12 @@ Voice Dictation brings seamless system-wide voice input to any text field across
   - Draggable partly beyond any screen edge, with saved position and a small reachable portion retained.
   - Adjustable floating icon size (50–150%) and opacity, applied immediately from Settings.
   - Hides automatically when focus moves away from text fields.
-- **Live Incremental Transcription:**
-  - Integrated Silero Voice Activity Detector (VAD).
-  - Processes speech incrementally as you speak.
-  - Tap microphone icon to start recording; icon transforms into a stop button with a pulsing recording indicator.
-  - Tap stop to finalize transcription and automatically inject text into the focused field (with automatic clipboard fallback).
+- **Accuracy-First Live Dictation:**
+  - Silero VAD gates advisory previews; previews show up to the most recent 12 seconds and may change or omit earlier words.
+  - Tap microphone to record; tap stop to run one authoritative decode of the entire captured recording, including pauses and short final reads. VAD segments/previews are never stitched into the final transcript.
+  - Recording automatically stops and finalizes at 120 seconds. Final inference can take substantially longer than previews on slower phones.
+  - Only the final transcript is inserted into the active focused field (with clipboard fallback); external IPC transcripts are never pasted or copied by the overlay.
+  - Full context is intended to avoid segmentation-related loss, not guarantee correct recognition. Noise, accent, model/language choice, hotword bias, long silence and device constraints can still cause errors; review important text.
 - **Custom Vocabulary (Context Biasing):**
   - Add technical terms, names, or specialized acronyms in the dedicated Vocabulary tab.
   - Applies modified beam search with a configurable hotwords bonus score.
@@ -36,6 +37,17 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
+## Accuracy-first live dictation in v1.0.6 (build 7)
+
+- Retains exact captured PCM independently of VAD, bounded to 120 seconds / 3,840,000 PCM bytes. One full-recording final decode replaces the old stitched-segment finalization; there is no partial-result fallback on final failure.
+- Throttles rolling previews to at least two seconds between decodes, skips stale preview work, and disables previews after a recoverable preview failure without discarding recorded audio.
+- Keeps native initialization, preview/final decode, stream cleanup and model destruction serialized. Cancellation stops the microphone promptly but must wait for an already-running native decode to return before ownership can be reused.
+- Accessibility focus loss caused by notification/quick-settings panels no longer cancels an active floating session. Idle hiding, explicit stop/cancel, screen-off/lock safety, service interruption/destruction, disable, and IPC ownership checks remain in place.
+- Does not insert into an old field covered by SystemUI; ordinary floating results fall back to history/clipboard when unlocked. Nothing is pasted or copied on screen lock or through IPC.
+- Extends the protected IPC total session deadline to ten minutes for loading/capture/full-context processing. Clients should allow up to five minutes after STOP for final processing (device-dependent, not a latency guarantee), still canceling on genuine backgrounding/death.
+
+See [Live dictation implementation review](docs/live-dictation-review.md) for buffer/native ownership details and verification limits.
+
 ## Hermes local dictation integration in v1.0.5 (build 6)
 
 Voice Dictation exposes the signature-protected Messenger protocol described in
@@ -45,7 +57,7 @@ Hermes can forward completed watch audio through `CMD_TRANSCRIBE_FILE = 4`: a
 readable file descriptor containing raw 16 kHz mono PCM16LE, up to 120 seconds.
 File transcription needs no phone microphone permission, uses a full-context final
 decode, and shares secure exclusive ownership/cancellation with live dictation.
-Ordinary floating dictation remains independent and unchanged.
+Ordinary floating dictation remains independent; v1.0.6 also uses a full-recording final decode for live capture.
 
 ## Overlay customization in v1.0.3
 
@@ -62,7 +74,7 @@ Dictation insertion refreshes the accessibility node and excludes displayed hint
 - Fixes the native process exit when custom vocabulary is enabled by configuring BPE tokenization and bundling matching Parakeet v2/v3 vocabularies. Vocabulary capitalization is preserved.
 - Loads and releases native models off the UI thread, with decoding and destruction serialized to prevent use-after-release races.
 - Separates microphone capture from inference using a bounded queue; reports overload instead of silently losing audio.
-- Finalizes VAD segments once, without appending the same speech again on stop.
+- Originally finalized VAD segments once; v1.0.6 supersedes this with full-recording finalization.
 - Adds a persistent **Enable dictation service** switch at the top of Settings. Disabling cancels dictation, hides the overlay, and releases models without revoking Android accessibility permission.
 - Includes regression tests for bounded audio buffering and tokenizer validation.
 

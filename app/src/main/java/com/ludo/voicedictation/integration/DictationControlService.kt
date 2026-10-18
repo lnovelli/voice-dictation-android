@@ -32,7 +32,8 @@ class DictationControlService : Service() {
         const val ERROR = 104
         const val CONTROL_PERMISSION = "com.ludo.voicedictation.permission.CONTROL_DICTATION"
         private const val CLIENT_PACKAGE = "com.hermes.assistant"
-        private const val MAX_SESSION_MS = 5 * 60 * 1000L
+        // Includes model loading, up to 120 s of capture, and slower full-context decode.
+        private const val MAX_SESSION_MS = 10 * 60 * 1000L
         private const val TAG = "DictationControl"
     }
 
@@ -156,7 +157,7 @@ class DictationControlService : Service() {
         current.death = IBinder.DeathRecipient { handler.post { abort(current) } }
         current.timeout = Runnable {
             if (owner === current && !current.cancelled) {
-                emit(current, ERROR, "error", "Dictation exceeded the five-minute session limit.")
+                emit(current, ERROR, "error", "Dictation exceeded the ten-minute session limit.")
                 abort(current)
             }
         }

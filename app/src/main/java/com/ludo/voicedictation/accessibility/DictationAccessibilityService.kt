@@ -1,6 +1,11 @@
 package com.ludo.voicedictation.accessibility
 
 import android.accessibilityservice.AccessibilityService
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.PowerManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -8,6 +13,8 @@ import android.os.Bundle
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.core.content.ContextCompat
+import com.ludo.voicedictation.asr.SpeechEngine
 import com.ludo.voicedictation.overlay.OverlayManager
 import com.ludo.voicedictation.data.AppPreferences
 
@@ -26,6 +33,19 @@ class DictationAccessibilityService : AccessibilityService() {
     private lateinit var overlayManager: OverlayManager
     private val prefs by lazy { AppPreferences(this) }
     private var lastFocusedNode: AccessibilityNodeInfo? = null
+    private var screenReceiverRegistered = false
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                lastFocusedNode = null
+                overlayManager.hide() // Explicit safety cancellation, not a focus transition.
+            }
+        }
+    }
+
+    private fun isScreenUsable(): Boolean =
+        (getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive &&
+            !(getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -34,6 +54,10 @@ class DictationAccessibilityService : AccessibilityService() {
         overlayManager.onFinalTranscriptionReady = { text ->
             insertText(text)
         }
+        overlayManager.onSessionIdle = { refreshServiceState() }
+        ContextCompat.registerReceiver(this, screenReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF),
+            ContextCompat.RECEIVER_NOT_EXPORTED)
+        screenReceiverRegistered = true
         refreshServiceState()
         Log.i(TAG, "DictationAccessibilityService connected")
     }
@@ -55,7 +79,7 @@ class DictationAccessibilityService : AccessibilityService() {
     }
 
     fun refreshServiceState() {
-        if (!prefs.serviceEnabled) {
+        if (!prefs.serviceEnabled || !isScreenUsable()) {
             lastFocusedNode = null
             overlayManager.hide()
         } else {
@@ -64,6 +88,11 @@ class DictationAccessibilityService : AccessibilityService() {
     }
 
     private fun handleFocusEvent(node: AccessibilityNodeInfo?) {
+        if (!isScreenUsable()) {
+            lastFocusedNode = null
+            overlayManager.hide()
+            return
+        }
         if (isEditableNode(node)) {
             lastFocusedNode = node
             overlayManager.show()
@@ -73,10 +102,15 @@ class DictationAccessibilityService : AccessibilityService() {
             if (isEditableNode(activeInput)) {
                 lastFocusedNode = activeInput
                 overlayManager.show()
-            } else {
+            } else if (!SpeechEngine.getInstance(this).isLocalSessionActive) {
                 lastFocusedNode = null
                 overlayManager.hide()
             }
+            // Expanding notification/quick-settings panels replaces rootInActiveWindow
+            // with a non-editable SystemUI window. That is NOT a recording cancel.
+            // Keep the local stop control and original target until completion; normal
+            // idle focus hiding is re-evaluated after final delivery. Explicit hide,
+            // screen-off/lock, interruption and service destruction still cancel.
         }
     }
 
@@ -90,7 +124,7 @@ class DictationAccessibilityService : AccessibilityService() {
     }
 
     fun insertText(text: String) {
-        if (!prefs.serviceEnabled) return
+        if (!prefs.serviceEnabled || !isScreenUsable()) return
         val targetNode = lastFocusedNode ?: rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         if (targetNode == null) {
             Log.w(TAG, "No focused text field available to insert dictation")
@@ -100,6 +134,13 @@ class DictationAccessibilityService : AccessibilityService() {
 
         try {
             check(targetNode.refresh()) { "The focused text field is no longer available." }
+            // A retained target is not permission to paste into an obscured/old app.
+            // If STOP completes while SystemUI covers it, keep the result in history
+            // and clipboard rather than modifying that background field.
+            check(targetNode.isFocused && isEditableNode(targetNode) &&
+                rootInActiveWindow?.windowId == targetNode.windowId) {
+                "The dictation target is no longer the active focused field."
+            }
             val textToInsert = DictationTextInsertion.compose(
                 targetNode.text?.toString(), targetNode.isShowingHintText, text
             )
@@ -141,6 +182,10 @@ class DictationAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (screenReceiverRegistered) {
+            unregisterReceiver(screenReceiver)
+            screenReceiverRegistered = false
+        }
         if (::overlayManager.isInitialized) overlayManager.destroy()
         instance = null
         Log.i(TAG, "DictationAccessibilityService destroyed")

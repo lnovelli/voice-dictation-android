@@ -2,6 +2,8 @@
 
 Live microphone commands are available in Voice Dictation 1.0.4 (versionCode 5).
 File transcription is added in **1.0.5 (versionCode 6)** without changing protocol 1.
+**1.0.6 (versionCode 7)** also uses one full-recording final decode for live capture;
+recording is capped at 120 seconds, and the total IPC deadline is ten minutes.
 
 ## Setup and security
 
@@ -51,7 +53,7 @@ to the **same callback Messenger** for the session and put these values in `data
 | `Message.what` | Name | Behavior |
 | --- | --- | --- |
 | `1` | START | Claims exclusive engine ownership and begins loading/capture. |
-| `2` | STOP | Stops microphone capture, drains queued audio, and finishes final decode. |
+| `2` | STOP | Stops microphone capture and finishes one full-recording final decode; previews are not final. |
 | `3` | CANCEL | Stops capture and discards all pending transcription; no acknowledgement or final result. |
 | `4` | CMD_TRANSCRIBE_FILE | Claims exclusive ownership and transcribes a completed PCM file asynchronously; no START or STOP is needed. |
 
@@ -129,17 +131,31 @@ be ignored.
 | `Message.what` | Name | Additional Bundle key | Meaning |
 | --- | --- | --- | --- |
 | `101` | STATE | `state`: String | `loading`, `recording`, or `processing` |
-| `102` | PARTIAL | `text`: String | Replace the displayed draft; never append or submit it. |
+| `102` | PARTIAL | `text`: String | Replace the displayed draft (up to the latest 12 seconds); never append or submit it. |
 | `103` | RESULT | `text`: String | Nonempty final transcript after final decode and complete engine cleanup. |
 | `104` | ERROR | `error`: String | Human-readable failure, validation error, busy rejection, or timeout. |
 
 Typical flow: START → loading → recording → partials → STOP → processing →
 RESULT (or ERROR). Processing may be repeated; there is no mandatory idle event.
-Some short sessions have no partials. No-speech results are ERROR, not an empty
-RESULT. Failures of a running session terminate it; validation errors and busy
-rejections do not cancel the existing session. A maximum **five minutes from
-accepted START or CMD_TRANSCRIBE_FILE** applies to loading, recording and processing together. Timeout
-emits ERROR, stops capture and discards pending output.
+Some short sessions have no partials. Live previews are throttled (at least two
+seconds between decodes), may disappear after a recoverable preview failure, and
+may differ substantially from the final. They contain only a rolling window, not
+an authoritative full-session transcript. Only RESULT may be submitted. Live PCM,
+including pauses and sub-VAD-window remainders, is retained up to **120 seconds**;
+reaching the cap automatically stops capture and starts finalization without STOP.
+A final decode error produces ERROR, never the last partial or stitched text.
+An empty final transcript is ERROR, not an empty RESULT. Recognition accuracy,
+including silence/noise behavior, is model-dependent and not guaranteed.
+Failures of a running session terminate it; validation errors and busy rejections
+do not cancel the existing session. A maximum **ten minutes from accepted START
+or CMD_TRANSCRIBE_FILE** applies to loading, recording and processing together.
+Timeout emits ERROR, stops capture and discards pending output.
+
+Clients should allow **five minutes after STOP** for full-context final processing
+(and handle automatic processing at the recording cap). This is a recommended
+client deadline, not a performance guarantee; slower devices or high hotword
+cost can still time out. Do not submit a draft on timeout. Genuine activity
+backgrounding, unbind and explicit cancellation must still cancel promptly.
 
 Hermes should focus its text composer and START on the first power-long-press;
 on the next press, STOP and wait for RESULT, then submit that final text once.
@@ -160,7 +176,11 @@ in a way that would release native objects underneath active inference.
 
 External sessions have their own owner token and listener. Overlay hide/destroy,
 accessibility focus changes and overlay taps cannot stop or hijack them. Ordinary
-floating dictation still injects its own final result into the focused field.
+floating dictation inserts only its own full-recording final result into the
+active focused field. Transient focus loss such as opening notifications no longer
+cancels an active floating session. Screen-off/lock, explicit cancellation,
+accessibility interruption/destruction and disabling still cancel local capture;
+these overlay events never hijack an IPC-owned session.
 Disabling dictation or explicitly releasing models from Voice Dictation Settings
 cancels an active external session and reports ERROR when the client is connected.
 
