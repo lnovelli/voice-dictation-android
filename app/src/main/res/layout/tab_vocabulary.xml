@@ -1,11 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="16dp"
+    android:fillViewport="true"
     android:background="@color/background_dark">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
 
     <!-- Add Word Card -->
     <LinearLayout
@@ -71,6 +76,84 @@
         </LinearLayout>
     </LinearLayout>
 
+    <!-- Experimental acoustic context controls; disabled by default. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/bg_card"
+        android:padding="16dp"
+        android:layout_marginBottom="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/acoustic_vocabulary_title"
+            android:textColor="@color/text_primary"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="6dp" />
+
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/switchAcousticVocabulary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/acoustic_vocabulary_toggle"
+            android:textColor="@color/text_primary" />
+
+        <TextView
+            android:id="@+id/tvAcousticVocabularyWarning"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/acoustic_vocabulary_warning"
+            android:textColor="@color/warning"
+            android:textSize="12sp"
+            android:lineSpacingExtra="2dp"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="10dp" />
+
+        <TextView
+            android:id="@+id/tvMaxActivePaths"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp" />
+
+        <com.google.android.material.slider.Slider
+            android:id="@+id/sliderMaxActivePaths"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:valueFrom="2"
+            android:valueTo="8"
+            android:stepSize="1"
+            android:value="4"
+            android:contentDescription="@string/max_active_paths_label"
+            app:thumbColor="@color/accent"
+            app:trackColorActive="@color/accent"
+            app:trackColorInactive="@color/surface_variant_dark" />
+
+        <TextView
+            android:id="@+id/tvHotwordsScore"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp"
+            android:layout_marginTop="6dp" />
+
+        <com.google.android.material.slider.Slider
+            android:id="@+id/sliderHotwordsScore"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:valueFrom="1.0"
+            android:valueTo="5.0"
+            android:stepSize="0.1"
+            android:value="1.0"
+            android:contentDescription="@string/hotwords_score_label"
+            app:thumbColor="@color/accent"
+            app:trackColorActive="@color/accent"
+            app:trackColorInactive="@color/surface_variant_dark" />
+    </LinearLayout>
+
     <!-- Vocabulary List Header -->
     <LinearLayout
         android:layout_width="match_parent"
@@ -106,17 +189,17 @@
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rvVocabulary"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_height="wrap_content"
         android:clipToPadding="false"
+        android:nestedScrollingEnabled="false"
         android:paddingBottom="16dp" />
 
     <!-- Empty State -->
     <TextView
         android:id="@+id/tvEmptyVocabulary"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_height="wrap_content"
+        android:minHeight="160dp"
         android:gravity="center"
         android:text="@string/empty_vocabulary"
         android:textColor="@color/text_secondary"
@@ -124,4 +207,5 @@
         android:padding="24dp"
         android:visibility="gone" />
 
-</LinearLayout>
+    </LinearLayout>
+</androidx.core.widget.NestedScrollView>

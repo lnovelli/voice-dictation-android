@@ -38,7 +38,14 @@
     <string name="overlay_scale_label">Floating icon size: %1$d%%</string>
     <string name="overlay_scale_hint">50–150% of the original size. Changes apply immediately. Drag partly beyond any screen edge; a small part stays reachable.</string>
     <string name="vocabulary_spelling_label">Use custom vocabulary spelling</string>
-    <string name="vocabulary_spelling_hint">Spelling only: capitalizes or joins/splits spaces in text with identical recognized letters. Acoustic custom-word recognition is not restored: the bundled decoder can repeat words or lose speech with contextual boosting. Your saved terms are retained.</string>
+    <string name="vocabulary_spelling_hint">Post-transcript spelling only: recases or joins/splits spaces when the recognized letters already match. Independent of the experimental acoustic hotword switch in the Vocabulary tab; these hints cannot correct sound-alike recognition.</string>
+    <string name="acoustic_vocabulary_title">Acoustic Custom-Word Decoding (Experimental)</string>
+    <string name="acoustic_vocabulary_toggle">Enable acoustic hotword bias</string>
+    <string name="acoustic_vocabulary_warning">Off by default to preserve unbiased recognition. Modified beam search can repeat terms or change/omit unrelated speech; previous native probes reproduced this. The four-path, score-1 setup is exposed for testing, not accuracy-guaranteed. Blank penalty is fixed at 0.0. Only plain text terms (letters, digits, spaces, apostrophes or hyphens) are used for acoustic bias; unsupported saved entries remain available as spelling hints.</string>
+    <string name="max_active_paths_label">Active search paths</string>
+    <string name="max_active_paths_value">Active search paths: %1$d (2–8)</string>
+    <string name="hotwords_score_label">Hotword score</string>
+    <string name="hotwords_score_value">Hotword score: %1$s (1.0–5.0)</string>
 
     <string name="transcript_removal_title">Remove words from final transcript</string>
     <string name="transcript_removal_hint">Enabled by default for um, uhm and uh. Edit one word or phrase per line, then Save. Matches whole words without case sensitivity, never parts of real words. Only final text changes, across floating, live and file dictation. Clear the list or switch off to keep everything. Settings are read when transcription begins.</string>
@@ -49,10 +56,10 @@
     <string name="transcript_removal_error">Use up to 100 entries, each up to 80 characters: letters, numbers, spaces, apostrophes or hyphens. No regular expressions.</string>
 
     <string name="vocabulary_title">Custom Vocabulary</string>
-    <string name="vocabulary_hint">Acoustic context boosting is currently unavailable because native probes found repetition and lost speech. Saved names and technical terms remain available for optional spelling-only hints; these cannot add words or correct sound-alike recognition. This is not a replacement for acoustic custom-word recognition.</string>
+    <string name="vocabulary_hint">Add names or technical terms here. They can be used as post-transcript spelling hints and, when enabled below, as acoustic hotwords with experimental modified beam search. Acoustic bias can repeat terms or alter unrelated speech; it is off by default and is not accuracy-guaranteed.</string>
     <string name="add_word_hint">Enter word or phrase</string>
     <string name="btn_add">Add</string>
-    <string name="empty_vocabulary">No custom vocabulary added yet. Add optional spelling hints above.</string>
+    <string name="empty_vocabulary">No custom terms yet. Add terms above to use as spelling hints or experimental acoustic hotwords.</string>
     
     <string name="history_title">Transcription History</string>
     <string name="btn_clear_history">Clear History</string>

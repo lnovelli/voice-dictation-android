@@ -22,6 +22,10 @@ class AppPreferences(context: Context) {
         private const val KEY_OVERLAY_OPACITY = "overlay_opacity"
         private const val KEY_OVERLAY_SCALE = "overlay_scale_percent"
         private const val KEY_VOCABULARY_SPELLING = "vocabulary_spelling_enabled"
+        private const val KEY_ACOUSTIC_VOCABULARY_ENABLED = "acoustic_vocabulary_enabled"
+        private const val KEY_ACOUSTIC_MAX_ACTIVE_PATHS = "acoustic_max_active_paths"
+        private const val KEY_ACOUSTIC_HOTWORDS_SCORE = "acoustic_hotwords_score"
+
         private const val KEY_OVERLAY_X = "overlay_x"
         private const val KEY_OVERLAY_Y = "overlay_y"
         private const val KEY_VOCABULARY = "vocabulary"
@@ -56,6 +60,23 @@ class AppPreferences(context: Context) {
 
     val hasOverlayX: Boolean get() = prefs.contains(KEY_OVERLAY_X)
     val hasOverlayY: Boolean get() = prefs.contains(KEY_OVERLAY_Y)
+
+    // Acoustic bias is experimental and stays opt-in; default settings preserve the unbiased decoder.
+    var acousticVocabularyEnabled: Boolean
+        get() = prefs.getBoolean(KEY_ACOUSTIC_VOCABULARY_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_ACOUSTIC_VOCABULARY_ENABLED, value).apply()
+
+    var acousticMaxActivePaths: Int
+        get() = prefs.getInt(KEY_ACOUSTIC_MAX_ACTIVE_PATHS, 4).coerceIn(2, 8)
+        set(value) = prefs.edit().putInt(KEY_ACOUSTIC_MAX_ACTIVE_PATHS, value.coerceIn(2, 8)).apply()
+
+    var acousticHotwordsScore: Float
+        get() = prefs.getFloat(KEY_ACOUSTIC_HOTWORDS_SCORE, 1.0f)
+            .let { if (it.isFinite()) it.coerceIn(1.0f, 5.0f) else 1.0f }
+        set(value) = prefs.edit().putFloat(
+            KEY_ACOUSTIC_HOTWORDS_SCORE,
+            if (value.isFinite()) value.coerceIn(1.0f, 5.0f) else 1.0f
+        ).apply()
 
     // Legacy hotwords_score remains stored but is intentionally never read by ASR.
     var vocabularySpellingEnabled: Boolean

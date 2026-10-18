@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## ARM64-only packaging in v1.0.9 (build 10)
+## Current release: v1.1.1 (build 12; ARM64-only)
 
-Removes obsolete 32-bit ARM libraries. Requires a 64-bit ARM Android device; the S25 is supported. Dictation behavior, models, settings and signing identity are unchanged.
+Adds experimental acoustic hotword decoding to the Vocabulary tab. It is disabled by default; when enabled with eligible terms, it uses sherpa-onnx `modified_beam_search` and model-matched BPE tokenization. Active paths default to 4 (range 2–8); the hotword-score slider defaults to 1.0 (range 1.0–5.0, steps 0.1); blank penalty is fixed at 0.0. Biased decoding can repeat terms or alter/omit unrelated speech; review results and leave the switch off unless testing. The 1.0.9 ARM64-only packaging requirement remains.
 
 ## Features
 
@@ -24,14 +24,15 @@ Removes obsolete 32-bit ARM libraries. Requires a 64-bit ARM Android device; the
   - Hides automatically when focus moves away from text fields.
 - **Record, Then Transcribe (1.0.8 / build 9):**
   - Tap microphone to record exact bounded PCM only. No streaming, previews, VAD or native model initialization during recording.
-  - Tap Stop to load the model and run **one unbiased greedy decode of the complete recording**. No 20-second partitioning, per-window concatenation, synthetic padding or partial-result fallback. Final-only exact-zero endpoint trimming preserves every nonzero sample, internal pauses and 500 ms of original margins.
+  - Tap Stop to load the model and run one final decode of the complete recording. Unbiased greedy decoding is used by default; optional acoustic vocabulary switches to modified beam search. No 20-second partitioning, per-window concatenation, synthetic padding or partial-result fallback. Final-only exact-zero endpoint trimming preserves every nonzero sample, internal pauses and 500 ms of original margins.
   - Hold the recording button to discard without decoding. Release after a hold cannot restart; dragging cancels the hold timer, and cancelled touch gestures do not stop or discard audio. Accessible click/long-click and haptic cues are provided.
   - At 120 seconds, microphone capture closes and bounded PCM waits for your explicit Stop or Cancel. A toast explains the limit; Stop stays available. Reaching the cap never initiates transcription.
   - Only the final transcript is inserted into the active focused field (with clipboard fallback); external IPC transcripts are never pasted or copied by the overlay.
-  - Full-context inference can be slow and memory intensive. Accuracy is **not guaranteed**: native v3 probes recognized short English/French clips but returned empty text when the same speech preceded silence to 120 seconds. Silence returned no repeated vocabulary tokens. Review important text; see [verification and limitations](docs/record-then-transcribe-1.0.8.md).
-- **Custom Vocabulary (Optional Spelling Hints):**
-  - Add technical terms, names, or specialized acronyms in the dedicated Vocabulary tab.
-  - Preserves matching capitalization/spacing only (e.g. “next cloud” → “Nextcloud”), with a Settings switch. It cannot introduce letters, repair sound-alikes or boost acoustic recognition. Native hotword bias is disabled: the bundled decoder can hallucinate repeated vocabulary terms on silence.
+  - Full-context inference can be slow and memory intensive. Accuracy is **not guaranteed**: with unbiased greedy decoding, native v3 probes recognized short English/French clips but returned empty text when the same speech preceded silence to 120 seconds. With the hotword-free greedy configuration, silence returned no repeated vocabulary tokens. Review important text; see [verification and limitations](docs/record-then-transcribe-1.0.8.md).
+- **Custom Vocabulary:**
+  - Add technical terms, names or acronyms in the Vocabulary tab. The separate spelling switch can only recase or join/split spaces when the recognized letters already match.
+  - Optional experimental acoustic hotword bias is also in the Vocabulary tab. It uses modified beam search with model-matched BPE vocab files; initial settings are four active paths, score 1.0 and fixed blank penalty 0.0. Its toggle is **off by default**; active paths and score have sliders.
+  - Acoustic bias is not accuracy-safe: the pinned native decoder can reward completed terms on multiple paths, causing repetitions or changing/omitting unrelated speech. Keep disabled unless testing, and review all output; see [current controls and limitations](docs/acoustic-vocabulary-1.1.1.md) and [prior native probe details](docs/acoustic-vocabulary-1.1.0.md).
 - **Editable Final-Transcript Removal List:**
   - Enabled by default with conservative fillers `um`, `uhm`, `uh` (not ambiguous `ah`, `like` or `so`). Settings provides a switch, one-word/phrase-per-line editor, Save and Restore Defaults.
   - Removes literal case-insensitive Unicode whole words/phrases only, never substrings such as `um` inside `album`. Apostrophe/hyphen words and combining marks are protected; punctuation and spacing left by removals are cleaned conservatively.
@@ -81,7 +82,9 @@ Hermes can forward completed watch audio through `CMD_TRANSCRIBE_FILE = 4`: a
 readable file descriptor containing raw 16 kHz mono PCM16LE, up to 120 seconds.
 File transcription needs no phone microphone permission and shares secure exclusive
 ownership/cancellation with live dictation. Since v1.0.8 both paths use exactly one
-unbiased full-recording final decode. Ordinary floating dictation remains independent.
+full-recording final decode; since v1.1.0 the opt-in experimental Vocabulary-tab
+hotwords also apply to file dictation, while unbiased greedy remains the default.
+Ordinary floating dictation remains independent.
 
 ## Overlay customization in v1.0.3
 

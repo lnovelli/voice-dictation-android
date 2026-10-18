@@ -9,9 +9,11 @@ import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.ludo.voicedictation.R
 import com.ludo.voicedictation.asr.SpeechEngine
 import com.ludo.voicedictation.data.AppPreferences
 import com.ludo.voicedictation.databinding.TabVocabularyBinding
+import java.util.Locale
 
 class VocabularyFragment : Fragment() {
 
@@ -40,7 +42,46 @@ class VocabularyFragment : Fragment() {
         setupRecyclerView()
         setupAddWord()
         setupClearAll()
+        setupAcousticControls()
         refreshList()
+    }
+
+    private fun setupAcousticControls() {
+        binding.switchAcousticVocabulary.isChecked = prefs.acousticVocabularyEnabled
+        binding.sliderMaxActivePaths.value = prefs.acousticMaxActivePaths.toFloat()
+        binding.sliderHotwordsScore.value = prefs.acousticHotwordsScore
+
+        fun updateLabels() {
+            binding.tvMaxActivePaths.text = getString(
+                R.string.max_active_paths_value, prefs.acousticMaxActivePaths
+            )
+            binding.tvHotwordsScore.text = getString(
+                R.string.hotwords_score_value,
+                String.format(Locale.ROOT, "%.1f", prefs.acousticHotwordsScore)
+            )
+
+        }
+        fun updateSliderEnabled(enabled: Boolean) {
+            binding.sliderMaxActivePaths.isEnabled = enabled
+            binding.sliderHotwordsScore.isEnabled = enabled
+
+        }
+
+        updateLabels()
+        updateSliderEnabled(prefs.acousticVocabularyEnabled)
+        binding.switchAcousticVocabulary.setOnCheckedChangeListener { _, enabled ->
+            prefs.acousticVocabularyEnabled = enabled
+            updateSliderEnabled(enabled)
+        }
+        binding.sliderMaxActivePaths.addOnChangeListener { _, value, fromUser ->
+            if (fromUser) prefs.acousticMaxActivePaths = value.toInt()
+            updateLabels()
+        }
+        binding.sliderHotwordsScore.addOnChangeListener { _, value, fromUser ->
+            if (fromUser) prefs.acousticHotwordsScore = value
+            updateLabels()
+        }
+
     }
 
     private fun setupRecyclerView() {

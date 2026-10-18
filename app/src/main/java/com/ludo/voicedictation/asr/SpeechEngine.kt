@@ -31,6 +31,7 @@ class SpeechEngine private constructor(private val context: Context) {
         private const val MAX_FILE_BYTES = 3_840_000L
         private const val CAPTURE_READ_SAMPLES = 1024
         private const val MAX_LIVE_SAMPLES = SAMPLE_RATE * 120
+        private val HOTWORD_PATTERN = Regex("""^[\p{L}\p{M}\p{N}]+(?:[- '’][\p{L}\p{M}\p{N}]+)*$""")
         @Volatile private var instance: SpeechEngine? = null
         fun getInstance(context: Context): SpeechEngine = instance ?: synchronized(this) {
             instance ?: SpeechEngine(context.applicationContext).also { instance = it }
@@ -59,6 +60,14 @@ class SpeechEngine private constructor(private val context: Context) {
         @Synchronized fun closeAudioFile() { runCatching { audioFile?.close() } }
     }
 
+    private data class DecoderConfigKey(
+        val modelId: String,
+        val acousticBiasEnabled: Boolean,
+        val maxActivePaths: Int,
+        val hotwordsScore: Float,
+        val hotwords: List<String>
+    )
+
     val isExternalSessionActive: Boolean get() = session?.owner != null
     val isLocalSessionActive: Boolean get() = session?.let { it.owner == null && !it.cancelled } == true
     val isBusy: Boolean get() = session != null || sessionJob?.isActive == true || releaseJob?.isActive == true
@@ -70,7 +79,7 @@ class SpeechEngine private constructor(private val context: Context) {
     private val nativeLock = Mutex()
     private val recorderLock = Any()
     private var recognizer: OfflineRecognizer? = null
-    private var loadedModelId: String? = null
+    private var loadedConfigKey: DecoderConfigKey? = null
     private var spellingHints = RecognitionPolicy.SpellingHints(emptySet())
     private var transcriptFilter = TranscriptFilter(emptyList())
     private var recorder: AudioRecord? = null
@@ -220,18 +229,39 @@ class SpeechEngine private constructor(private val context: Context) {
     // All native creation, decoding and destruction run under nativeLock, never on the UI thread.
     private fun initializeEngine() {
         val model = ModelInfo.getModelById(prefs.selectedModelId)
-        // Snapshot optional hints even when the acoustic model can be reused.
+        // Snapshot vocabulary and post-processing options only after explicit Stop/completed-file capture.
+        val vocabulary = prefs.getVocabulary().toSet()
         spellingHints = RecognitionPolicy.SpellingHints(
-            if (prefs.vocabularySpellingEnabled) prefs.getVocabulary().toSet() else emptySet()
+            if (prefs.vocabularySpellingEnabled) vocabulary else emptySet()
         )
         transcriptFilter = TranscriptFilter(
             if (prefs.transcriptRemovalEnabled) prefs.transcriptRemovalWords else emptyList()
         )
-        if (recognizer != null && loadedModelId == model.id) return
+
+        val safeHotwords = if (prefs.acousticVocabularyEnabled) {
+            vocabulary.asSequence()
+                .map { it.trim().replace(Regex("""\s+"""), " ") }
+                .filter { it.length in 1..80 && HOTWORD_PATTERN.matches(it) }
+                .distinct()
+                .sorted()
+                .toList()
+        } else emptyList()
+        val useAcousticBias = safeHotwords.isNotEmpty()
+        val configKey = DecoderConfigKey(
+            modelId = model.id,
+            acousticBiasEnabled = useAcousticBias,
+            maxActivePaths = if (useAcousticBias) prefs.acousticMaxActivePaths else 1,
+            hotwordsScore = if (useAcousticBias) prefs.acousticHotwordsScore else 0f,
+            hotwords = safeHotwords
+        )
+        if (recognizer != null && loadedConfigKey == configKey) return
+
         releaseNative()
         check(modelManager.isModelDownloaded(model)) { "Download the selected model in Settings." }
         val dir = modelManager.getModelDir(model)
         try {
+            val bpeVocab = if (useAcousticBias) installBpeVocab(model) else null
+            val hotwordsFile = if (useAcousticBias) writeHotwordsFile(safeHotwords) else ""
             recognizer = OfflineRecognizer(null, OfflineRecognizerConfig(
                 featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 128),
                 modelConfig = OfflineModelConfig(
@@ -241,20 +271,59 @@ class SpeechEngine private constructor(private val context: Context) {
                         joiner = File(dir, model.joinerFileName).absolutePath
                     ),
                     tokens = File(dir, model.tokensFileName).absolutePath,
-                    numThreads = 2, provider = "cpu", modelType = "nemo_transducer"
+                    numThreads = 2,
+                    provider = "cpu",
+                    modelType = "nemo_transducer",
+                    modelingUnit = if (useAcousticBias) "bpe" else "",
+                    bpeVocab = bpeVocab?.absolutePath ?: ""
                 ),
-                // v1.13.8 NeMo beam search adds hotword reward both before top-k
-                // and in ContextGraph; never let vocabulary select that decode path.
-                // TDT greedy uses duration logits, recurrent state and last-token blank.
-                decodingMethod = "greedy_search", hotwordsFile = "",
-                hotwordsScore = 0f, blankPenalty = 0f
+                decodingMethod = if (useAcousticBias) "modified_beam_search" else "greedy_search",
+                maxActivePaths = configKey.maxActivePaths,
+                hotwordsFile = hotwordsFile,
+                hotwordsScore = configKey.hotwordsScore,
+                blankPenalty = 0.0f
             ))
-            loadedModelId = model.id
-            Log.i(TAG, "Loaded ${model.id}; unbiased TDT greedy decoder")
+            loadedConfigKey = configKey
+            Log.i(TAG, if (useAcousticBias) {
+                "Loaded ${model.id}; experimental modified beam search (paths=${configKey.maxActivePaths}, score=${configKey.hotwordsScore}, blank=0.0)"
+            } else {
+                "Loaded ${model.id}; unbiased TDT greedy decoder"
+            })
         } catch (e: Exception) {
             releaseNative()
             throw e
         }
+    }
+
+    /** Materialize the selected model's matching BPE vocabulary as a private file for sherpa-onnx. */
+    private fun installBpeVocab(model: ModelInfo): File {
+        val assetName = if (model.id == AppPreferences.MODEL_PARAKEET_V3) {
+            "parakeet_v3.vocab"
+        } else {
+            "parakeet_v2.vocab"
+        }
+        val directory = File(context.cacheDir, "asr-tokenizers")
+        check(directory.isDirectory || directory.mkdirs()) { "Could not create tokenizer directory." }
+        val destination = File(directory, assetName)
+        val temporary = File(directory, "$assetName.tmp")
+        if (temporary.exists()) check(temporary.delete()) { "Could not replace temporary tokenizer file." }
+        context.assets.open("tokenizers/$assetName").use { input ->
+            temporary.outputStream().use { output -> input.copyTo(output) }
+        }
+        check(temporary.length() > 100L) { "Bundled BPE vocabulary is missing or incomplete." }
+        if (destination.exists()) check(destination.delete()) { "Could not replace cached tokenizer file." }
+        check(temporary.renameTo(destination)) { "Could not install BPE vocabulary." }
+        return destination
+    }
+
+    /** sherpa's file-based hotword parser reserves slash, colon-score syntax and line breaks. */
+    private fun writeHotwordsFile(hotwords: List<String>): String {
+        require(hotwords.isNotEmpty())
+        val directory = File(context.cacheDir, "asr-context")
+        check(directory.isDirectory || directory.mkdirs()) { "Could not create ASR context directory." }
+        val file = File(directory, "hotwords.txt")
+        file.writeText(hotwords.joinToString(System.lineSeparator(), postfix = System.lineSeparator()), Charsets.UTF_8)
+        return file.absolutePath
     }
 
     /** PCM only. No ASR/VAD model, waveform queue, padding or inference during capture. */
@@ -405,7 +474,7 @@ class SpeechEngine private constructor(private val context: Context) {
         // stale object available for a later session or a second release.
         val oldRecognizer = recognizer
         recognizer = null
-        loadedModelId = null
+        loadedConfigKey = null
         oldRecognizer?.release()
     }
 
