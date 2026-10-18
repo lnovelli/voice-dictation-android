@@ -20,6 +20,7 @@ class AppPreferences(context: Context) {
         private const val KEY_SELECTED_MODEL = "selected_model"
         private const val KEY_HISTORY_LIMIT = "history_limit"
         private const val KEY_OVERLAY_OPACITY = "overlay_opacity"
+        private const val KEY_OVERLAY_SCALE = "overlay_scale_percent"
         private const val KEY_HOTWORDS_SCORE = "hotwords_score"
         private const val KEY_OVERLAY_X = "overlay_x"
         private const val KEY_OVERLAY_Y = "overlay_y"
@@ -29,6 +30,10 @@ class AppPreferences(context: Context) {
         const val MODEL_PARAKEET_V2 = "parakeet_v2"
         const val MODEL_PARAKEET_V3 = "parakeet_v3"
     }
+
+    var serviceEnabled: Boolean
+        get() = prefs.getBoolean("service_enabled", true)
+        set(value) = prefs.edit().putBoolean("service_enabled", value).apply()
 
     var selectedModelId: String
         get() = prefs.getString(KEY_SELECTED_MODEL, MODEL_PARAKEET_V2) ?: MODEL_PARAKEET_V2
@@ -41,6 +46,13 @@ class AppPreferences(context: Context) {
     var overlayOpacity: Int
         get() = prefs.getInt(KEY_OVERLAY_OPACITY, 80)
         set(value) = prefs.edit().putInt(KEY_OVERLAY_OPACITY, value).apply()
+
+    var overlayScalePercent: Int
+        get() = prefs.getInt(KEY_OVERLAY_SCALE, 100).coerceIn(50, 150)
+        set(value) = prefs.edit().putInt(KEY_OVERLAY_SCALE, value.coerceIn(50, 150)).apply()
+
+    val hasOverlayX: Boolean get() = prefs.contains(KEY_OVERLAY_X)
+    val hasOverlayY: Boolean get() = prefs.contains(KEY_OVERLAY_Y)
 
     var hotwordsScore: Float
         get() = prefs.getFloat(KEY_HOTWORDS_SCORE, 2.0f)

@@ -15,7 +15,8 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 - **One-Click Model Download:** In-app model downloader with real-time progress, background transfer, and automatic local archive extraction.
 - **Smart Floating Overlay Button:**
   - Automatically appears when any editable text input field receives focus across the operating system.
-  - Smoothly draggable to any position on screen with saved coordinate persistence.
+  - Draggable partly beyond any screen edge, with saved position and a small reachable portion retained.
+  - Adjustable floating icon size (50–150%) and opacity, applied immediately from Settings.
   - Hides automatically when focus moves away from text fields.
 - **Live Incremental Transcription:**
   - Integrated Silero Voice Activity Detector (VAD).
@@ -34,6 +35,27 @@ Voice Dictation brings seamless system-wide voice input to any text field across
   - Seamless download and installation prompt via `FileProvider`.
 
 ---
+
+## Overlay customization in v1.0.3
+
+- Allows partial off-screen dragging on all four edges, including restoring saved negative coordinates.
+- Adds a persistent 50–150% floating icon size slider in Settings, scaling the button, microphone/stop icon, processing spinner and recording ring together.
+- Keeps a small part of the button reachable after dragging, resizing or rotating the display.
+
+## Fix in v1.0.2
+
+Dictation insertion refreshes the accessibility node and excludes displayed hint/placeholder text while preserving actual existing input.
+
+## Reliability changes in v1.0.1
+
+- Fixes the native process exit when custom vocabulary is enabled by configuring BPE tokenization and bundling matching Parakeet v2/v3 vocabularies. Vocabulary capitalization is preserved.
+- Loads and releases native models off the UI thread, with decoding and destruction serialized to prevent use-after-release races.
+- Separates microphone capture from inference using a bounded queue; reports overload instead of silently losing audio.
+- Finalizes VAD segments once, without appending the same speech again on stop.
+- Adds a persistent **Enable dictation service** switch at the top of Settings. Disabling cancels dictation, hides the overlay, and releases models without revoking Android accessibility permission.
+- Includes regression tests for bounded audio buffering and tokenizer validation.
+
+Device-specific microphone, overlay, and native inference behavior still requires verification on a physical Android phone.
 
 ## Download & Installation
 

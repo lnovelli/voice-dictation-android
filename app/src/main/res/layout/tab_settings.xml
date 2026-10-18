@@ -12,6 +12,18 @@
         android:orientation="vertical"
         android:padding="16dp">
 
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/switchServiceEnabled"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp"
+            android:background="@drawable/bg_card"
+            android:text="@string/service_enabled_label"
+            android:textColor="@color/text_primary"
+            android:textSize="18sp" />
+
         <!-- Speech Model Selection Card -->
         <LinearLayout
             android:layout_width="match_parent"
@@ -375,6 +387,36 @@
                 app:thumbColor="@color/accent"
                 app:trackColorActive="@color/accent"
                 app:trackColorInactive="@color/surface_variant_dark" />
+
+            <TextView
+                android:id="@+id/tvOverlayScaleLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/overlay_scale_title"
+                android:labelFor="@id/sliderOverlayScale"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp"
+                android:layout_marginTop="8dp" />
+
+            <com.google.android.material.slider.Slider
+                android:id="@+id/sliderOverlayScale"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:valueFrom="50"
+                android:valueTo="150"
+                android:stepSize="5"
+                android:value="100"
+                android:contentDescription="@string/overlay_scale_title"
+                app:thumbColor="@color/accent"
+                app:trackColorActive="@color/accent"
+                app:trackColorInactive="@color/surface_variant_dark" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/overlay_scale_hint"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
 
             <!-- Hotwords Score -->
             <TextView

@@ -23,6 +23,7 @@ import com.ludo.voicedictation.data.AppPreferences
 import com.ludo.voicedictation.databinding.TabSettingsBinding
 import com.ludo.voicedictation.model.ModelInfo
 import com.ludo.voicedictation.model.ModelManager
+import com.ludo.voicedictation.overlay.OverlayManager
 import com.ludo.voicedictation.update.AppUpdateManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -66,6 +67,12 @@ class SettingsFragment : Fragment() {
         modelManager = ModelManager(context)
         speechEngine = SpeechEngine.getInstance(context)
 
+        binding.switchServiceEnabled.isChecked = prefs.serviceEnabled
+        binding.switchServiceEnabled.setOnCheckedChangeListener { _, enabled ->
+            prefs.serviceEnabled = enabled
+            DictationAccessibilityService.instance?.refreshServiceState()
+            if (!enabled) speechEngine.releaseEngine()
+        }
         setupModelSelection()
         setupPermissions()
         setupSliders()
@@ -106,10 +113,12 @@ class SettingsFragment : Fragment() {
                 .setTitle("Delete Model")
                 .setMessage("Delete ${model.displayName} files to free storage?")
                 .setPositiveButton("Delete") { _, _ ->
-                    speechEngine.releaseEngine()
-                    modelManager.deleteModel(model)
-                    updateModelStatus()
-                    Toast.makeText(requireContext(), "Model deleted", Toast.LENGTH_SHORT).show()
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        speechEngine.releaseEngine().join()
+                        val deleted = withContext(Dispatchers.IO) { modelManager.deleteModel(model) }
+                        updateModelStatus()
+                        Toast.makeText(requireContext(), if (deleted) "Model deleted" else "Model deletion failed", Toast.LENGTH_SHORT).show()
+                    }
                 }
                 .setNegativeButton("Cancel", null)
                 .show()
@@ -148,9 +157,10 @@ class SettingsFragment : Fragment() {
         binding.progressBarModel.progress = 0
         binding.tvProgressPercent.text = "Starting..."
 
-        lifecycleScope.launch(Dispatchers.IO) {
+        val downloadScope = viewLifecycleOwner.lifecycleScope
+        downloadScope.launch(Dispatchers.IO) {
             val result = modelManager.downloadModel(model) { step, progress ->
-                lifecycleScope.launch(Dispatchers.Main) {
+                downloadScope.launch(Dispatchers.Main) {
                     binding.progressBarModel.progress = progress
                     binding.tvProgressPercent.text = "$step $progress%"
                     binding.tvModelStatus.text = step
@@ -166,7 +176,7 @@ class SettingsFragment : Fragment() {
 
                 if (result.isSuccess) {
                     Toast.makeText(requireContext(), "${model.displayName} downloaded successfully!", Toast.LENGTH_LONG).show()
-                    speechEngine.initializeEngine()
+                    speechEngine.reloadVocabulary()
                 } else {
                     val err = result.exceptionOrNull()?.message ?: "Unknown error"
                     Toast.makeText(requireContext(), "Download failed: $err", Toast.LENGTH_LONG).show()
@@ -203,6 +213,7 @@ class SettingsFragment : Fragment() {
 
     private fun updatePermissionsStatus() {
         val context = context ?: return
+        if (_binding == null) return
 
         // Accessibility Service
         val a11yActive = DictationAccessibilityService.isServiceRunning()
@@ -255,6 +266,18 @@ class SettingsFragment : Fragment() {
             val opacity = value.toInt()
             prefs.overlayOpacity = opacity
             binding.tvOverlayOpacityLabel.text = "Overlay opacity: $opacity%"
+            OverlayManager.getInstance(requireContext()).refreshAppearance()
+        }
+
+        binding.sliderOverlayScale.value = prefs.overlayScalePercent.toFloat()
+        binding.tvOverlayScaleLabel.text = getString(R.string.overlay_scale_label, prefs.overlayScalePercent)
+        binding.sliderOverlayScale.setLabelFormatter { "${it.toInt()}%" }
+        binding.sliderOverlayScale.addOnChangeListener { _, value, fromUser ->
+            if (fromUser) {
+                prefs.overlayScalePercent = value.toInt()
+                binding.tvOverlayScaleLabel.text = getString(R.string.overlay_scale_label, value.toInt())
+                OverlayManager.getInstance(requireContext()).refreshAppearance()
+            }
         }
 
         // Hotwords score
@@ -277,6 +300,7 @@ class SettingsFragment : Fragment() {
             Toast.makeText(requireContext(), "Checking for updates...", Toast.LENGTH_SHORT).show()
 
             AppUpdateManager.checkForUpdates(requireContext()) { hasUpdate, remoteCode, remoteName, downloadUrl, notes, error ->
+                if (_binding == null || !isAdded) return@checkForUpdates
                 binding.btnCheckUpdates.isEnabled = true
                 if (error != null) {
                     Toast.makeText(requireContext(), error, Toast.LENGTH_LONG).show()
