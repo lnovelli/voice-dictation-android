@@ -1,7 +1,7 @@
 {
-  "version_code": 14,
-  "version_name": "1.1.3",
-  "download_url": "https://github.com/lnovelli/voice-dictation-android/releases/download/v1.1.3/voice-dictation.apk",
-  "sha256": "76ee73e79f4a49eb13766e48f843b1e469fcdef5aed534a4057f6103feed9621",
-  "release_notes": "v1.1.3: Persists floating-button placement atomically when a drag ends or is interrupted and restores it when the overlay is recreated. Manual update checks now discover the latest public GitHub release and verify release metadata, APK SHA-256, package, version, and signer before installation. ARM64-only packaging is unchanged."
+  "version_code": 15,
+  "version_name": "1.1.4",
+  "download_url": "https://github.com/lnovelli/voice-dictation-android/releases/download/v1.1.4/voice-dictation.apk",
+  "sha256": "3575a888491416b4b59db61a059159997a492fbfb21555a8e4dc867bab8c8ecd",
+  "release_notes": "v1.1.4: Saves floating-button positions independently in portrait and landscape, with an unset position centered vertically at the right edge. Also avoids inserting accessibility placeholder text during dictation. Uses the established public GitHub Releases updater. ARM64-only packaging is unchanged."
 }

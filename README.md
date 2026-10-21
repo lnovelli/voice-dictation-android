@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.1.3 (build 14; ARM64-only)
+## Current release: v1.1.4 (build 15; ARM64-only)
 
-Persists the floating-button position atomically when a drag completes or is interrupted, and restores that saved position when the overlay is recreated. Manual update checks now use the public GitHub Releases API; release metadata and APK SHA-256, package, version, and signer are verified before installation. Updates remain user-initiated, and ARM64-only packaging is unchanged.
+Floating-button position is saved independently for portrait and landscape; each mode defaults to vertically centered at the right edge until moved. Dictation insertion also avoids reusing accessibility text that may be a visible placeholder. Manual update checks use the public GitHub Releases API; release metadata and APK SHA-256, package, version, and signer are verified before installation. Updates remain user-initiated, and ARM64-only packaging is unchanged.
 
 ## Features
 
@@ -19,7 +19,7 @@ Persists the floating-button position atomically when a drag completes or is int
 - **One-Click Model Download:** In-app model downloader with real-time progress, background transfer, and automatic local archive extraction.
 - **Smart Floating Overlay Button:**
   - Automatically appears when any editable text input field receives focus across the operating system.
-  - Draggable partly beyond any screen edge, with saved position and a small reachable portion retained.
+  - Draggable partly beyond any screen edge, with independent saved positions for portrait and landscape; an unset position starts vertically centered at the right edge.
   - Adjustable floating icon size (50–150%) and opacity, applied immediately from Settings.
   - Hides automatically when focus moves away from text fields.
 - **Record, Then Transcribe (1.0.8 / build 9):**

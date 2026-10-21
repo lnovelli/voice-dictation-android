@@ -28,6 +28,10 @@ class AppPreferences(context: Context) {
 
         private const val KEY_OVERLAY_X = "overlay_x"
         private const val KEY_OVERLAY_Y = "overlay_y"
+        private const val KEY_OVERLAY_X_PORTRAIT = "overlay_x_portrait"
+        private const val KEY_OVERLAY_Y_PORTRAIT = "overlay_y_portrait"
+        private const val KEY_OVERLAY_X_LANDSCAPE = "overlay_x_landscape"
+        private const val KEY_OVERLAY_Y_LANDSCAPE = "overlay_y_landscape"
         private const val KEY_VOCABULARY = "vocabulary"
         private const val KEY_HISTORY = "history"
         private const val KEY_TRANSCRIPT_REMOVAL_ENABLED = "transcript_removal_enabled"
@@ -58,16 +62,42 @@ class AppPreferences(context: Context) {
         get() = prefs.getInt(KEY_OVERLAY_SCALE, 100).coerceIn(50, 150)
         set(value) = prefs.edit().putInt(KEY_OVERLAY_SCALE, value.coerceIn(50, 150)).apply()
 
-    /** Read and save the two signed coordinates as one atomic preference snapshot. */
-    fun savedOverlayPosition(): Pair<Int, Int>? {
-        if (!prefs.contains(KEY_OVERLAY_X) || !prefs.contains(KEY_OVERLAY_Y)) return null
-        return prefs.getInt(KEY_OVERLAY_X, -1) to prefs.getInt(KEY_OVERLAY_Y, -1)
+    /** Read a complete orientation-specific pair, migrating a legacy position into the first mode opened. */
+    fun savedOverlayPosition(isLandscape: Boolean): Pair<Int, Int>? {
+        val (xKey, yKey) = if (isLandscape) {
+            KEY_OVERLAY_X_LANDSCAPE to KEY_OVERLAY_Y_LANDSCAPE
+        } else {
+            KEY_OVERLAY_X_PORTRAIT to KEY_OVERLAY_Y_PORTRAIT
+        }
+        val hasX = prefs.contains(xKey)
+        val hasY = prefs.contains(yKey)
+        if (hasX && hasY) return prefs.getInt(xKey, -1) to prefs.getInt(yKey, -1)
+        if (hasX || hasY) return null
+
+        // Older builds stored a single shared position. Keep it for the mode active on
+        // upgrade, then let the other orientation start at its independent default.
+        val hasLegacyX = prefs.contains(KEY_OVERLAY_X)
+        val hasLegacyY = prefs.contains(KEY_OVERLAY_Y)
+        if (!hasLegacyX && !hasLegacyY) return null
+        val editor = prefs.edit().remove(KEY_OVERLAY_X).remove(KEY_OVERLAY_Y)
+        if (!hasLegacyX || !hasLegacyY) {
+            editor.commit()
+            return null
+        }
+        val x = prefs.getInt(KEY_OVERLAY_X, -1)
+        val y = prefs.getInt(KEY_OVERLAY_Y, -1)
+        if (!editor.putInt(xKey, x).putInt(yKey, y).commit()) return null
+        return x to y
     }
 
-    fun persistOverlayPosition(x: Int, y: Int): Boolean = prefs.edit()
-        .putInt(KEY_OVERLAY_X, x)
-        .putInt(KEY_OVERLAY_Y, y)
-        .commit()
+    fun persistOverlayPosition(x: Int, y: Int, isLandscape: Boolean): Boolean {
+        val (xKey, yKey) = if (isLandscape) {
+            KEY_OVERLAY_X_LANDSCAPE to KEY_OVERLAY_Y_LANDSCAPE
+        } else {
+            KEY_OVERLAY_X_PORTRAIT to KEY_OVERLAY_Y_PORTRAIT
+        }
+        return prefs.edit().putInt(xKey, x).putInt(yKey, y).commit()
+    }
 
     // Acoustic bias is experimental and stays opt-in; default settings preserve the unbiased decoder.
     var acousticVocabularyEnabled: Boolean

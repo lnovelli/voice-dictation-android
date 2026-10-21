@@ -130,7 +130,8 @@ class DictationAccessibilityService : AccessibilityService() {
 
     fun insertText(text: String) {
         if (!prefs.serviceEnabled || !isScreenUsable()) return
-        val targetNode = lastFocusedNode ?: rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        val focusedNode = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        val targetNode = focusedNode ?: lastFocusedNode
         if (targetNode == null) {
             Log.w(TAG, "No focused text field available to insert dictation")
             copyToClipboard(text)
@@ -146,22 +147,39 @@ class DictationAccessibilityService : AccessibilityService() {
                 rootInActiveWindow?.windowId == targetNode.windowId) {
                 "The dictation target is no longer the active focused field."
             }
-            val textToInsert = DictationTextInsertion.compose(
-                targetNode.text?.toString(), targetNode.isShowingHintText, text
+            val plan = DictationTextInsertion.plan(
+                existingText = targetNode.text?.toString(),
+                showingHint = targetNode.isShowingHintText,
+                hintText = targetNode.hintText?.toString(),
+                contentDescription = targetNode.contentDescription?.toString(),
+                selectionStart = targetNode.textSelectionStart,
+                selectionEnd = targetNode.textSelectionEnd,
+                transcription = text
             )
+
+            if (plan.method == DictationTextInsertion.Method.PASTE_AT_CURSOR) {
+                // Some custom accessibility providers expose the drawn placeholder as
+                // node.text without setting isShowingHintText. Pasting only the transcript
+                // lets the editor mutate its real input buffer, without copying that hint.
+                if (!copyToClipboard(plan.text)) return
+                if (!targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
+                    Log.w(TAG, "Paste action rejected; transcript remains on clipboard")
+                }
+                return
+            }
 
             val arguments = Bundle().apply {
                 putCharSequence(
                     AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                    textToInsert
+                    plan.text
                 )
             }
 
-            val success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-            if (!success) {
-                Log.i(TAG, "ACTION_SET_TEXT returned false, attempting clipboard paste fallback")
-                copyToClipboard(text)
-                targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            if (!targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
+                Log.i(TAG, "Set-text action rejected; attempting clipboard paste fallback")
+                if (copyToClipboard(text) && !targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
+                    Log.w(TAG, "Paste fallback rejected; transcript remains on clipboard")
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to insert text: ${e.message}", e)
@@ -169,13 +187,15 @@ class DictationAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun copyToClipboard(text: String) {
-        try {
+    private fun copyToClipboard(text: String): Boolean {
+        return try {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             val clip = ClipData.newPlainText("Dictated Text", text)
             clipboard.setPrimaryClip(clip)
+            true
         } catch (e: Exception) {
             Log.e(TAG, "Clipboard copy error: ${e.message}")
+            false
         }
     }
 

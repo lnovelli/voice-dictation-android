@@ -52,6 +52,7 @@ class OverlayManager(private val context: Context) {
     private var params: WindowManager.LayoutParams? = null
     private var isAttached = false
     private var hasUncommittedPosition = false
+    private var positionIsLandscape = context.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     private var pulseAnimator: ObjectAnimator? = null
     private var cancelGesture: (() -> Unit)? = null
     private val configurationCallbacks = object : ComponentCallbacks {
@@ -109,6 +110,7 @@ class OverlayManager(private val context: Context) {
             initOverlayView()
         }
 
+        val orientationChanged = updatePositionForOrientation()
         if (!isAttached && overlayView != null && params != null) {
             applyOverlaySize()
             clampPosition()
@@ -118,6 +120,14 @@ class OverlayManager(private val context: Context) {
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to attach overlay window: ${e.message}", e)
                 return
+            }
+        } else if (isAttached && orientationChanged) {
+            applyOverlaySize()
+            clampPosition()
+            try {
+                windowManager.updateViewLayout(overlayView, params)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to reposition overlay after orientation change", e)
             }
         }
 
@@ -139,13 +149,9 @@ class OverlayManager(private val context: Context) {
         val inflater = LayoutInflater.from(themeContext)
         overlayView = inflater.inflate(R.layout.overlay_dictation, null)
 
-        val dm = context.resources.displayMetrics
-        val defaultX = dm.widthPixels - (70 * dm.density).toInt()
-        val defaultY = dm.heightPixels / 2
-
-        val savedPosition = prefs.savedOverlayPosition()
-        val initialX = savedPosition?.first ?: defaultX
-        val initialY = savedPosition?.second ?: defaultY
+        positionIsLandscape = currentIsLandscape()
+        val savedPosition = prefs.savedOverlayPosition(positionIsLandscape)
+        val (initialX, initialY) = savedPosition ?: defaultOverlayPosition()
 
         val windowType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -200,19 +206,51 @@ class OverlayManager(private val context: Context) {
         }
     }
 
+    private fun currentIsLandscape(): Boolean =
+        context.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    /** Default to the right edge and vertically center the visible button, not its top edge. */
+    private fun defaultOverlayPosition(): Pair<Int, Int> {
+        val dm = context.resources.displayMetrics
+        val bounds = displayBounds()
+        val windowSize = OverlayGeometry.pixels(80, dm.density, prefs.overlayScalePercent)
+        val buttonSize = OverlayGeometry.pixels(52, dm.density, prefs.overlayScalePercent)
+        val buttonLeftInset = (windowSize - buttonSize) / 2
+        val rightMargin = OverlayGeometry.pixels(4, dm.density, OverlayGeometry.DEFAULT_SCALE)
+        val x = bounds.width() - buttonLeftInset - buttonSize - rightMargin
+        val y = (bounds.height() - windowSize) / 2
+        return x to y
+    }
+
+    private fun displayBounds(): android.graphics.Rect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        windowManager.currentWindowMetrics.bounds
+    } else {
+        @Suppress("DEPRECATION")
+        android.graphics.Rect().also { rect ->
+            val metrics = android.util.DisplayMetrics()
+            windowManager.defaultDisplay.getRealMetrics(metrics)
+            rect.set(0, 0, metrics.widthPixels, metrics.heightPixels)
+        }
+    }
+
+    /** Load the other orientation's saved coordinates, or its centered right-edge default. */
+    private fun updatePositionForOrientation(): Boolean {
+        val landscape = currentIsLandscape()
+        if (landscape == positionIsLandscape) return false
+        persistOverlayPositionIfNeeded()
+        positionIsLandscape = landscape
+        val lp = params ?: return true
+        val (x, y) = prefs.savedOverlayPosition(landscape) ?: defaultOverlayPosition()
+        lp.x = x
+        lp.y = y
+        hasUncommittedPosition = false
+        return true
+    }
+
     private fun clampPosition() {
         val lp = params ?: return
         val dm = context.resources.displayMetrics
-        val bounds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            windowManager.currentWindowMetrics.bounds
-        } else {
-            @Suppress("DEPRECATION")
-            android.graphics.Rect().also { rect ->
-                val metrics = android.util.DisplayMetrics()
-                windowManager.defaultDisplay.getRealMetrics(metrics)
-                rect.set(0, 0, metrics.widthPixels, metrics.heightPixels)
-            }
-        }
+        val bounds = displayBounds()
         val buttonSize = OverlayGeometry.pixels(52, dm.density, prefs.overlayScalePercent)
         lp.x = OverlayGeometry.clampAxis(lp.x, bounds.width(), lp.width, buttonSize, dm.density)
         lp.y = OverlayGeometry.clampAxis(lp.y, bounds.height(), lp.height, buttonSize, dm.density)
@@ -222,7 +260,7 @@ class OverlayManager(private val context: Context) {
     private fun persistOverlayPositionIfNeeded() {
         if (!hasUncommittedPosition) return
         val lp = params ?: return
-        if (prefs.persistOverlayPosition(lp.x, lp.y)) {
+        if (prefs.persistOverlayPosition(lp.x, lp.y, positionIsLandscape)) {
             hasUncommittedPosition = false
         } else {
             Log.w(TAG, "Could not persist floating-button position")
@@ -231,6 +269,7 @@ class OverlayManager(private val context: Context) {
 
     fun refreshAppearance() {
         if (overlayView == null) return
+        updatePositionForOrientation()
         applyOverlaySize()
         clampPosition()
         if (isAttached) {
