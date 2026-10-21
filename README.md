@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.1.2 (build 13; ARM64-only)
+## Current release: v1.1.3 (build 14; ARM64-only)
 
-Fixes the floating overlay status during externally owned dictation: recording, loading and processing are now reflected, and the indicator stays visible while the screen is usable. Also includes the experimental Vocabulary-tab hotword controls. Bias is off by default; active paths default to 4 (range 2–8), hotword score defaults to 1.0 (range 1.0–5.0, steps 0.1), and blank penalty is fixed at 0.0. Biased decoding can alter unrelated speech; review results and leave it off unless testing. The 1.0.9 ARM64-only packaging requirement remains.
+Persists the floating-button position atomically when a drag completes or is interrupted, and restores that saved position when the overlay is recreated. Manual update checks now use the public GitHub Releases API; release metadata and APK SHA-256, package, version, and signer are verified before installation. Updates remain user-initiated, and ARM64-only packaging is unchanged.
 
 ## Features
 
@@ -41,9 +41,9 @@ Fixes the floating overlay status during externally owned dictation: recording, 
   - Automatically stores recent transcriptions with timestamps.
   - Configurable retention limit (default 10, adjustable from 5 to 50).
   - One-tap clipboard copy and deletion.
-- **Self-Hosted In-App Updates:**
-  - Integrated update checker comparing local build against self-hosted release manifests.
-  - Seamless download and installation prompt via `FileProvider`.
+- **GitHub Releases In-App Updates:**
+  - The manual update checker reads the latest stable release and its version manifest from the public GitHub repository.
+  - Before offering installation, the app verifies the APK SHA-256, package name, version code, and signing identity.
 
 ---
 
@@ -109,11 +109,10 @@ Device-specific microphone, overlay, and native inference behavior still require
 
 ## Download & Installation
 
-Direct APK download:
-[Download Voice Dictation APK](https://example.invalid/download/voice-dictation.apk)
+Latest release and release notes:
+https://github.com/lnovelli/voice-dictation-android/releases/latest
 
-Update Manifest:
-`https://example.invalid/download/voice-dictation-version.json`
+Each release includes `voice-dictation.apk` and `voice-dictation-version.json` with the version code/name, version-specific APK URL, SHA-256, and release notes. The updater discovers the current release through the GitHub Releases API.
 
 ---
 

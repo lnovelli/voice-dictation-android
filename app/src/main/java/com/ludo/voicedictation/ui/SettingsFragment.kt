@@ -324,7 +324,7 @@ class SettingsFragment : Fragment() {
             binding.btnCheckUpdates.isEnabled = false
             Toast.makeText(requireContext(), "Checking for updates...", Toast.LENGTH_SHORT).show()
 
-            AppUpdateManager.checkForUpdates(requireContext()) { hasUpdate, remoteCode, remoteName, downloadUrl, notes, error ->
+            AppUpdateManager.checkForUpdates(requireContext()) { hasUpdate, remoteCode, remoteName, downloadUrl, notes, sha256, error ->
                 if (_binding == null || !isAdded) return@checkForUpdates
                 binding.btnCheckUpdates.isEnabled = true
                 if (error != null) {
@@ -341,6 +341,8 @@ class SettingsFragment : Fragment() {
                             AppUpdateManager.downloadAndPromptInstall(
                                 context = requireContext(),
                                 downloadUrl = downloadUrl,
+                                expectedSha256 = sha256,
+                                expectedVersionCode = remoteCode,
                                 onError = { msg ->
                                     Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
                                 }

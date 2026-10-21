@@ -51,6 +51,7 @@ class OverlayManager(private val context: Context) {
     private var overlayView: View? = null
     private var params: WindowManager.LayoutParams? = null
     private var isAttached = false
+    private var hasUncommittedPosition = false
     private var pulseAnimator: ObjectAnimator? = null
     private var cancelGesture: (() -> Unit)? = null
     private val configurationCallbacks = object : ComponentCallbacks {
@@ -142,8 +143,9 @@ class OverlayManager(private val context: Context) {
         val defaultX = dm.widthPixels - (70 * dm.density).toInt()
         val defaultY = dm.heightPixels / 2
 
-        val initialX = if (prefs.hasOverlayX) prefs.overlayX else defaultX
-        val initialY = if (prefs.hasOverlayY) prefs.overlayY else defaultY
+        val savedPosition = prefs.savedOverlayPosition()
+        val initialX = savedPosition?.first ?: defaultX
+        val initialY = savedPosition?.second ?: defaultY
 
         val windowType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -216,6 +218,17 @@ class OverlayManager(private val context: Context) {
         lp.y = OverlayGeometry.clampAxis(lp.y, bounds.height(), lp.height, buttonSize, dm.density)
     }
 
+    /** Synchronously commit a completed/interrupted drag before its owner can be restarted. */
+    private fun persistOverlayPositionIfNeeded() {
+        if (!hasUncommittedPosition) return
+        val lp = params ?: return
+        if (prefs.persistOverlayPosition(lp.x, lp.y)) {
+            hasUncommittedPosition = false
+        } else {
+            Log.w(TAG, "Could not persist floating-button position")
+        }
+    }
+
     fun refreshAppearance() {
         if (overlayView == null) return
         applyOverlaySize()
@@ -251,6 +264,7 @@ class OverlayManager(private val context: Context) {
         }
         cancelGesture = {
             root.removeCallbacks(hold)
+            persistOverlayPositionIfNeeded()
             touchActive = false
             consumeRelease = true
         }
@@ -293,9 +307,12 @@ class OverlayManager(private val context: Context) {
                             root.removeCallbacks(hold)
                         }
                         if (isDragging) {
+                            val oldX = lp.x
+                            val oldY = lp.y
                             lp.x = initialX + dx.toInt()
                             lp.y = initialY + dy.toInt()
                             clampPosition()
+                            if (lp.x != oldX || lp.y != oldY) hasUncommittedPosition = true
                             try { windowManager.updateViewLayout(overlayView, lp) } catch (_: Exception) { }
                         }
                     }
@@ -305,8 +322,7 @@ class OverlayManager(private val context: Context) {
                     root.removeCallbacks(hold)
                     if (touchActive && !consumeRelease) {
                         if (isDragging) {
-                            prefs.overlayX = lp.x
-                            prefs.overlayY = lp.y
+                            persistOverlayPositionIfNeeded()
                         } else root.performClick()
                     }
                     touchActive = false
@@ -316,10 +332,7 @@ class OverlayManager(private val context: Context) {
                 MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_POINTER_DOWN -> {
                     // Cancel the gesture only, never stop/decode/cancel a recording on touch cancellation.
                     root.removeCallbacks(hold)
-                    if (isDragging) {
-                        prefs.overlayX = lp.x
-                        prefs.overlayY = lp.y
-                    }
+                    if (isDragging) persistOverlayPositionIfNeeded()
                     touchActive = false
                     consumeRelease = true
                     true
@@ -414,6 +427,7 @@ class OverlayManager(private val context: Context) {
 
     fun destroy() {
         cancelGesture?.invoke()
+        persistOverlayPositionIfNeeded()
         cancelGesture = null
         if (overlayView != null) context.unregisterComponentCallbacks(configurationCallbacks)
         speechEngine.cancelRecording()

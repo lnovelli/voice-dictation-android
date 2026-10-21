@@ -58,8 +58,16 @@ class AppPreferences(context: Context) {
         get() = prefs.getInt(KEY_OVERLAY_SCALE, 100).coerceIn(50, 150)
         set(value) = prefs.edit().putInt(KEY_OVERLAY_SCALE, value.coerceIn(50, 150)).apply()
 
-    val hasOverlayX: Boolean get() = prefs.contains(KEY_OVERLAY_X)
-    val hasOverlayY: Boolean get() = prefs.contains(KEY_OVERLAY_Y)
+    /** Read and save the two signed coordinates as one atomic preference snapshot. */
+    fun savedOverlayPosition(): Pair<Int, Int>? {
+        if (!prefs.contains(KEY_OVERLAY_X) || !prefs.contains(KEY_OVERLAY_Y)) return null
+        return prefs.getInt(KEY_OVERLAY_X, -1) to prefs.getInt(KEY_OVERLAY_Y, -1)
+    }
+
+    fun persistOverlayPosition(x: Int, y: Int): Boolean = prefs.edit()
+        .putInt(KEY_OVERLAY_X, x)
+        .putInt(KEY_OVERLAY_Y, y)
+        .commit()
 
     // Acoustic bias is experimental and stays opt-in; default settings preserve the unbiased decoder.
     var acousticVocabularyEnabled: Boolean
@@ -92,14 +100,6 @@ class AppPreferences(context: Context) {
         get() = (prefs.getString(KEY_TRANSCRIPT_REMOVAL_WORDS, null)
             ?: DEFAULT_TRANSCRIPT_REMOVALS.joinToString("\n")).lines().filter { it.isNotBlank() }
         set(value) = prefs.edit().putString(KEY_TRANSCRIPT_REMOVAL_WORDS, value.joinToString("\n")).apply()
-
-    var overlayX: Int
-        get() = prefs.getInt(KEY_OVERLAY_X, -1)
-        set(value) = prefs.edit().putInt(KEY_OVERLAY_X, value).apply()
-
-    var overlayY: Int
-        get() = prefs.getInt(KEY_OVERLAY_Y, -1)
-        set(value) = prefs.edit().putInt(KEY_OVERLAY_Y, value).apply()
 
     fun getVocabulary(): Set<String> {
         return prefs.getStringSet(KEY_VOCABULARY, emptySet()) ?: emptySet()
