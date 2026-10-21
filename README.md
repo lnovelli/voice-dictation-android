@@ -6,7 +6,7 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.1.3 (build 14; ARM64-only)
+## Prepared release: v1.1.3 (build 14; ARM64-only)
 
 Persists the floating-button position atomically when a drag completes or is interrupted, and restores that saved position when the overlay is recreated. Manual update checks now use the public GitHub Releases API; release metadata and APK SHA-256, package, version, and signer are verified before installation. Updates remain user-initiated, and ARM64-only packaging is unchanged.
 
