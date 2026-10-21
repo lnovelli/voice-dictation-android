@@ -60,6 +60,30 @@
     <string name="add_word_hint">Enter word or phrase</string>
     <string name="btn_add">Add</string>
     <string name="empty_vocabulary">No custom terms yet. Add terms above to use as spelling hints or experimental acoustic hotwords.</string>
+
+    <string name="string_replacement_title">Custom String Replacements</string>
+    <string name="string_replacement_hint">Map common transcription variants to the intended text. Each rule can have several input alternatives, one per line. Matching is case-insensitive and respects whole words and phrases; replacements apply to final transcripts.</string>
+    <string name="string_replacement_add">Add Replacement</string>
+    <string name="string_replacement_count">Replacement Rules (%1$d)</string>
+    <string name="string_replacement_empty">No custom replacements yet. Add a rule to map common transcription variants to the text you want.</string>
+    <string name="string_replacement_edit">Edit</string>
+    <string name="string_replacement_delete">Delete string replacement</string>
+    <string name="string_replacement_add_dialog">Add String Replacement</string>
+    <string name="string_replacement_edit_dialog">Edit String Replacement</string>
+    <string name="string_replacement_inputs_hint">Input alternatives</string>
+    <string name="string_replacement_inputs_helper">One literal phrase per line; up to 20 alternatives per rule.</string>
+    <string name="string_replacement_output_hint">Replace with</string>
+    <string name="string_replacement_save">Save</string>
+    <string name="string_replacement_inputs_error">Enter 1–20 non-empty alternatives, each no longer than 120 characters.</string>
+    <string name="string_replacement_output_error">Enter replacement text up to 120 characters.</string>
+    <string name="string_replacement_duplicate_error">An input already belongs to another rule. Each input can map to only one output.</string>
+    <string name="string_replacement_limit_error">Up to 50 rules and 200 input alternatives total are supported.</string>
+    <string name="string_replacement_clear_title">Clear Replacements</string>
+    <string name="string_replacement_clear_message">Remove all %1$d custom string replacement rules?</string>
+    <string name="string_replacement_clear_action">Clear All</string>
+    <string name="string_replacement_saved">String replacement saved</string>
+    <string name="string_replacement_deleted">String replacement removed</string>
+    <string name="string_replacement_cleared">All string replacements cleared</string>
     
     <string name="history_title">Transcription History</string>
     <string name="btn_clear_history">Clear History</string>

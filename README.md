@@ -33,6 +33,8 @@ Floating-button position is saved independently for portrait and landscape; each
   - Add technical terms, names or acronyms in the Vocabulary tab. The separate spelling switch can only recase or join/split spaces when the recognized letters already match.
   - Optional experimental acoustic hotword bias is also in the Vocabulary tab. It uses modified beam search with model-matched BPE vocab files; initial settings are four active paths, score 1.0 and fixed blank penalty 0.0. Its toggle is **off by default**; active paths and score have sliders.
   - Acoustic bias is not accuracy-safe: the pinned native decoder can reward completed terms on multiple paths, causing repetitions or changing/omitting unrelated speech. Keep disabled unless testing, and review all output; see [current controls and limitations](docs/acoustic-vocabulary-1.1.1.md) and [prior native probe details](docs/acoustic-vocabulary-1.1.0.md).
+- **Custom String Replacements:**
+  - In the Vocabulary tab, map multiple literal transcription variants to one output phrase. Matching is case-insensitive and respects whole-word/phrase boundaries; replacements are applied automatically to final transcripts and remain independent of acoustic word boosting.
 - **Editable Final-Transcript Removal List:**
   - Enabled by default with conservative fillers `um`, `uhm`, `uh` (not ambiguous `ah`, `like` or `so`). Settings provides a switch, one-word/phrase-per-line editor, Save and Restore Defaults.
   - Removes literal case-insensitive Unicode whole words/phrases only, never substrings such as `um` inside `album`. Apostrophe/hyphen words and combining marks are protected; punctuation and spacing left by removals are cleaned conservatively.

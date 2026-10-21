@@ -207,5 +207,92 @@
         android:padding="24dp"
         android:visibility="gone" />
 
+    <!-- Literal post-transcript replacements, separate from acoustic word boosting. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/bg_card"
+        android:padding="16dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/string_replacement_title"
+            android:textColor="@color/text_primary"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="6dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/string_replacement_hint"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp"
+            android:lineSpacingExtra="2dp"
+            android:layout_marginBottom="12dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnAddStringReplacement"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/string_replacement_add"
+            android:backgroundTint="@color/primary"
+            app:icon="@drawable/ic_add" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="8dp"
+        android:paddingHorizontal="4dp">
+
+        <TextView
+            android:id="@+id/tvStringReplacementCount"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/string_replacement_count"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvClearStringReplacements"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/string_replacement_clear_action"
+            android:textColor="@color/recording_red"
+            android:textSize="13sp"
+            android:clickable="true"
+            android:focusable="true"
+            android:padding="6dp" />
+    </LinearLayout>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvStringReplacements"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:clipToPadding="false"
+        android:nestedScrollingEnabled="false"
+        android:paddingBottom="8dp" />
+
+    <TextView
+        android:id="@+id/tvEmptyStringReplacements"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="100dp"
+        android:gravity="center"
+        android:text="@string/string_replacement_empty"
+        android:textColor="@color/text_secondary"
+        android:textSize="14sp"
+        android:padding="24dp"
+        android:visibility="gone" />
+
     </LinearLayout>
 </androidx.core.widget.NestedScrollView>

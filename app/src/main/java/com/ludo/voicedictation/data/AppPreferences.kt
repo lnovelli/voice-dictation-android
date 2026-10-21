@@ -36,6 +36,7 @@ class AppPreferences(context: Context) {
         private const val KEY_HISTORY = "history"
         private const val KEY_TRANSCRIPT_REMOVAL_ENABLED = "transcript_removal_enabled"
         private const val KEY_TRANSCRIPT_REMOVAL_WORDS = "transcript_removal_words"
+        private const val KEY_STRING_REPLACEMENT_RULES = "string_replacement_rules"
         val DEFAULT_TRANSCRIPT_REMOVALS: List<String> = listOf("um", "uhm", "uh")
 
         const val MODEL_PARAKEET_V2 = "parakeet_v2"
@@ -130,6 +131,32 @@ class AppPreferences(context: Context) {
         get() = (prefs.getString(KEY_TRANSCRIPT_REMOVAL_WORDS, null)
             ?: DEFAULT_TRANSCRIPT_REMOVALS.joinToString("\n")).lines().filter { it.isNotBlank() }
         set(value) = prefs.edit().putString(KEY_TRANSCRIPT_REMOVAL_WORDS, value.joinToString("\n")).apply()
+
+    fun getStringReplacementRules(): List<StringReplacementRule> {
+        val serialized = prefs.getString(KEY_STRING_REPLACEMENT_RULES, null) ?: return emptyList()
+        return runCatching {
+            val array = JSONArray(serialized)
+            val rules = mutableListOf<StringReplacementRule>()
+            for (index in 0 until array.length()) {
+                val obj = array.optJSONObject(index) ?: continue
+                val inputArray = obj.optJSONArray("inputs") ?: continue
+                val inputs = (0 until inputArray.length()).mapNotNull { inputArray.opt(it) as? String }
+                val output = obj.opt("output") as? String ?: continue
+                rules.add(StringReplacementRule(inputs, output))
+            }
+            StringReplacementRules.normalize(rules)
+        }.getOrDefault(emptyList())
+    }
+
+    fun setStringReplacementRules(rules: Collection<StringReplacementRule>) {
+        val normalized = StringReplacementRules.normalize(rules)
+        val array = JSONArray()
+        normalized.forEach { rule ->
+            val inputs = JSONArray().apply { rule.inputs.forEach(::put) }
+            array.put(JSONObject().put("inputs", inputs).put("output", rule.output))
+        }
+        prefs.edit().putString(KEY_STRING_REPLACEMENT_RULES, array.toString()).apply()
+    }
 
     fun getVocabulary(): Set<String> {
         return prefs.getStringSet(KEY_VOCABULARY, emptySet()) ?: emptySet()

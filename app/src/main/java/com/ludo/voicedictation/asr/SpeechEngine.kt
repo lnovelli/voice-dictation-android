@@ -82,6 +82,7 @@ class SpeechEngine private constructor(private val context: Context) {
     private var loadedConfigKey: DecoderConfigKey? = null
     private var spellingHints = RecognitionPolicy.SpellingHints(emptySet())
     private var transcriptFilter = TranscriptFilter(emptyList())
+    private var stringReplacer = CustomStringReplacer(emptyList())
     private var recorder: AudioRecord? = null
     private var session: Session? = null
     private var sessionJob: Job? = null
@@ -240,6 +241,7 @@ class SpeechEngine private constructor(private val context: Context) {
         transcriptFilter = TranscriptFilter(
             if (prefs.transcriptRemovalEnabled) prefs.transcriptRemovalWords else emptyList()
         )
+        stringReplacer = CustomStringReplacer(prefs.getStringReplacementRules())
 
         val safeHotwords = if (prefs.acousticVocabularyEnabled) {
             vocabulary.asSequence()
@@ -397,7 +399,7 @@ class SpeechEngine private constructor(private val context: Context) {
         Log.i(TAG, "Final PCM endpoints ${endpoints.start}..${endpoints.endExclusive} of ${samples.size}; exact-zero only")
         val text = decode(finalSamples, current)
         if (current.cancelled || !prefs.serviceEnabled) return ""
-        return transcriptFilter.apply(spellingHints.apply(text))
+        return transcriptFilter.apply(stringReplacer.apply(spellingHints.apply(text)))
     }
 
     private fun decode(samples: FloatArray, current: Session): String {
