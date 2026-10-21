@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.1.4 (build 15; ARM64-only)
+## Current release: v1.1.5 (build 16; ARM64-only)
 
-Floating-button position is saved independently for portrait and landscape; each mode defaults to vertically centered at the right edge until moved. Dictation insertion also avoids reusing accessibility text that may be a visible placeholder. Manual update checks use the public GitHub Releases API; release metadata and APK SHA-256, package, version, and signer are verified before installation. Updates remain user-initiated, and ARM64-only packaging is unchanged.
+Floating-button position is saved independently for portrait and landscape; each mode defaults to vertically centered at the right edge until moved. Dictation insertion avoids reusing accessibility text that may be a visible placeholder. The Vocabulary tab supports persistent custom string-replacement rules, mapping multiple case-insensitive input variants to one output in final transcripts. Manual update checks use the public GitHub Releases API; release metadata and APK SHA-256, package, version, and signer are verified before installation. Updates remain user-initiated, and ARM64-only packaging is unchanged.
 
 ## Features
 
