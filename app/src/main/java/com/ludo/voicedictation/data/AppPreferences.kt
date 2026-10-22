@@ -37,11 +37,30 @@ class AppPreferences(context: Context) {
         private const val KEY_TRANSCRIPT_REMOVAL_ENABLED = "transcript_removal_enabled"
         private const val KEY_TRANSCRIPT_REMOVAL_WORDS = "transcript_removal_words"
         private const val KEY_STRING_REPLACEMENT_RULES = "string_replacement_rules"
+        private const val KEY_TRANSCRIPT_POLISHING_ENABLED = "transcript_polishing_enabled"
+        private const val KEY_TRANSCRIPT_POLISHING_ENDPOINT = "transcript_polishing_endpoint"
+        private const val KEY_TRANSCRIPT_POLISHING_MODEL = "transcript_polishing_model"
+        const val DEFAULT_TRANSCRIPT_POLISHING_ENDPOINT = "http://127.0.0.1:11434"
+        const val DEFAULT_TRANSCRIPT_POLISHING_MODEL = "default"
         val DEFAULT_TRANSCRIPT_REMOVALS: List<String> = listOf("um", "uhm", "uh")
 
         const val MODEL_PARAKEET_V2 = "parakeet_v2"
         const val MODEL_PARAKEET_V3 = "parakeet_v3"
     }
+
+    var transcriptPolishingEnabled: Boolean
+        get() = prefs.getBoolean(KEY_TRANSCRIPT_POLISHING_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_TRANSCRIPT_POLISHING_ENABLED, value).apply()
+
+    var transcriptPolishingEndpoint: String
+        get() = prefs.getString(KEY_TRANSCRIPT_POLISHING_ENDPOINT, DEFAULT_TRANSCRIPT_POLISHING_ENDPOINT)
+            ?.takeIf { it.length <= 2048 } ?: DEFAULT_TRANSCRIPT_POLISHING_ENDPOINT
+        set(value) = prefs.edit().putString(KEY_TRANSCRIPT_POLISHING_ENDPOINT, value.take(2048)).apply()
+
+    var transcriptPolishingModel: String
+        get() = prefs.getString(KEY_TRANSCRIPT_POLISHING_MODEL, DEFAULT_TRANSCRIPT_POLISHING_MODEL)
+            ?.takeIf { it.length in 1..128 } ?: DEFAULT_TRANSCRIPT_POLISHING_MODEL
+        set(value) = prefs.edit().putString(KEY_TRANSCRIPT_POLISHING_MODEL, value.take(128)).apply()
 
     var serviceEnabled: Boolean
         get() = prefs.getBoolean("service_enabled", true)

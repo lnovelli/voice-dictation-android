@@ -4,6 +4,22 @@
     <string name="tab_settings">Settings</string>
     <string name="tab_vocabulary">Vocabulary</string>
     <string name="tab_history">History</string>
+    <string name="tab_polishing">Polish</string>
+    <string name="polishing_enabled_label">Enable AI transcript polishing</string>
+    <string name="polishing_privacy_hint">Off by default. When enabled, the final transcript and your personal vocabulary are sent as text to this configured server; audio is never sent. 127.0.0.1 refers to this phone.</string>
+    <string name="polishing_server_title">OpenAI-Compatible Server</string>
+    <string name="polishing_server_hint">Enter the server base URL and model. For example, http://127.0.0.1:11434 with model default. The app calls /v1/chat/completions (or /chat/completions when the URL ends in /v1). HTTP is restricted to this phone; use HTTPS for other hosts.</string>
+    <string name="polishing_endpoint_hint">Base URL</string>
+    <string name="polishing_model_hint">Model name</string>
+    <string name="polishing_not_tested">Connection has not been tested.</string>
+    <string name="polishing_invalid_config">Check the highlighted server settings.</string>
+    <string name="polishing_saved">Configuration saved. Test the connection before enabling.</string>
+    <string name="polishing_testing">Testing server and model…</string>
+    <string name="polishing_test_success">Connection successful. The model returned OK.</string>
+    <string name="polishing_save">Save settings</string>
+    <string name="polishing_test">Test connection</string>
+    <string name="polishing_prompt_title">Editing rules</string>
+    <string name="polishing_prompt_hint">The editor makes conservative spelling, punctuation, grammar, and clear speech-recognition corrections. It preserves the original language, meaning, tone, names, numbers, dates, negations, and identifiers; it does not translate, summarize, add facts, or rewrite for style. Your vocabulary is only a spelling/recognition hint, never a reason to insert a word. Uncertain text, fillers, repetitions, and fragments are preserved; the app applies filler removal and custom replacements separately. The transcript and vocabulary are treated as text, not instructions.</string>
     
     <string name="model_section_title">Speech Recognition Model</string>
     <string name="model_parakeet_v2">Parakeet TDT 0.6B v2 (English)</string>

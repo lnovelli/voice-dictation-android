@@ -75,6 +75,7 @@ class SpeechEngine private constructor(private val context: Context) {
 
     private val prefs = AppPreferences(context)
     private val modelManager = ModelManager(context)
+    private val transcriptPolisher = TranscriptPolisher()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val nativeLock = Mutex()
     private val recorderLock = Any()
@@ -143,6 +144,25 @@ class SpeechEngine private constructor(private val context: Context) {
                                 if (!current.cancelled) setState(false, true, "processing")
                             }
                             decodeRecording(samples, current)
+                        }
+                    }
+                    val originalText = current.text.orEmpty()
+                    if (!current.cancelled && prefs.serviceEnabled && originalText.isNotBlank()) {
+                        if (prefs.transcriptPolishingEnabled) {
+                            val polishedText = transcriptPolisher.polish(
+                                baseUrl = prefs.transcriptPolishingEndpoint,
+                                model = prefs.transcriptPolishingModel,
+                                vocabulary = prefs.getVocabulary(),
+                                transcript = originalText
+                            )
+                            current.text = if (!current.cancelled && prefs.transcriptPolishingEnabled) {
+                                polishedText ?: originalText
+                            } else originalText
+                        }
+                        if (!current.cancelled && prefs.serviceEnabled) {
+                            current.text = transcriptFilter.apply(
+                                stringReplacer.apply(spellingHints.apply(current.text.orEmpty()))
+                            )
                         }
                     }
                 }
@@ -399,7 +419,7 @@ class SpeechEngine private constructor(private val context: Context) {
         Log.i(TAG, "Final PCM endpoints ${endpoints.start}..${endpoints.endExclusive} of ${samples.size}; exact-zero only")
         val text = decode(finalSamples, current)
         if (current.cancelled || !prefs.serviceEnabled) return ""
-        return transcriptFilter.apply(stringReplacer.apply(spellingHints.apply(text)))
+        return text
     }
 
     private fun decode(samples: FloatArray, current: Session): String {

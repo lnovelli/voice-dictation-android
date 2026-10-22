@@ -40,18 +40,23 @@ class MainActivity : AppCompatActivity() {
                     tab.text = getString(R.string.tab_history)
                     tab.setIcon(R.drawable.ic_history)
                 }
+                3 -> {
+                    tab.text = getString(R.string.tab_polishing)
+                    tab.setIcon(R.drawable.ic_polish)
+                }
             }
         }.attach()
     }
 
     private class MainPagerAdapter(activity: AppCompatActivity) : FragmentStateAdapter(activity) {
-        override fun getItemCount(): Int = 3
+        override fun getItemCount(): Int = 4
 
         override fun createFragment(position: Int): Fragment {
             return when (position) {
                 0 -> SettingsFragment()
                 1 -> VocabularyFragment()
                 2 -> HistoryFragment()
+                3 -> PolishingFragment()
                 else -> SettingsFragment()
             }
         }

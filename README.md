@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.1.5 (build 16; ARM64-only)
+## Current release: v1.1.6 (build 17; ARM64-only)
 
-Floating-button position is saved independently for portrait and landscape; each mode defaults to vertically centered at the right edge until moved. Dictation insertion avoids reusing accessibility text that may be a visible placeholder. The Vocabulary tab supports persistent custom string-replacement rules, mapping multiple case-insensitive input variants to one output in final transcripts. Manual update checks use the public GitHub Releases API; release metadata and APK SHA-256, package, version, and signer are verified before installation. Updates remain user-initiated, and ARM64-only packaging is unchanged.
+Floating-button position is saved independently for portrait and landscape; each mode defaults to vertically centered at the right edge until moved. Dictation insertion avoids reusing accessibility text that may be a visible placeholder. The Vocabulary tab supports persistent custom string-replacement rules, mapping multiple case-insensitive input variants to one output in final transcripts. The new Polish tab optionally sends final transcript text and personal vocabulary to a configurable OpenAI-compatible server; it is disabled by default, defaults to the phone's loopback server, and never sends audio. HTTP is allowed only for loopback; other hosts require HTTPS. Manual update checks use the public GitHub Releases API; release metadata and APK SHA-256, package, version, and signer are verified before installation. Updates remain user-initiated, and ARM64-only packaging is unchanged.
 
 ## Features
 
@@ -35,6 +35,11 @@ Floating-button position is saved independently for portrait and landscape; each
   - Acoustic bias is not accuracy-safe: the pinned native decoder can reward completed terms on multiple paths, causing repetitions or changing/omitting unrelated speech. Keep disabled unless testing, and review all output; see [current controls and limitations](docs/acoustic-vocabulary-1.1.1.md) and [prior native probe details](docs/acoustic-vocabulary-1.1.0.md).
 - **Custom String Replacements:**
   - In the Vocabulary tab, map multiple literal transcription variants to one output phrase. Matching is case-insensitive and respects whole-word/phrase boundaries; replacements are applied automatically to final transcripts and remain independent of acoustic word boosting.
+- **Optional AI Transcript Polishing:**
+  - The Polish tab configures and tests an OpenAI-compatible chat-completions endpoint and model. Defaults are `http://127.0.0.1:11434` and `default`; the master switch is off until explicitly enabled.
+  - Sends only the final transcript and custom vocabulary as text, never audio. HTTP is restricted to `127.0.0.1`/`localhost`; external hosts require HTTPS. A bounded timeout, response-size limit, and no-redirect policy apply.
+  - The fixed accuracy-first prompt preserves language, meaning, tone, names, numbers and uncertain wording; it corrects clear errors without translating, summarizing or rewriting for style. Vocabulary is a hint only. Fillers, repetitions and fragments remain for the app's separate removal setting.
+  - On connection, HTTP, timeout, malformed-response or empty-output failures, the original ASR transcript proceeds through the existing local post-processing.
 - **Editable Final-Transcript Removal List:**
   - Enabled by default with conservative fillers `um`, `uhm`, `uh` (not ambiguous `ah`, `like` or `so`). Settings provides a switch, one-word/phrase-per-line editor, Save and Restore Defaults.
   - Removes literal case-insensitive Unicode whole words/phrases only, never substrings such as `um` inside `album`. Apostrophe/hyphen words and combining marks are protected; punctuation and spacing left by removals are cleaned conservatively.
