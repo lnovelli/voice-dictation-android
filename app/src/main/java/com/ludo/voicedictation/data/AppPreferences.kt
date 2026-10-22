@@ -4,14 +4,17 @@ import android.content.Context
 import android.content.SharedPreferences
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.UUID
 
 data class HistoryItem(
     val id: String,
     val timestamp: Long,
-    val text: String
+    val text: String,
+    val audioFileName: String? = null
 )
 
 class AppPreferences(context: Context) {
+    private val appContext = context.applicationContext
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -210,7 +213,9 @@ class AppPreferences(context: Context) {
                     HistoryItem(
                         id = obj.optString("id", System.currentTimeMillis().toString()),
                         timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
-                        text = obj.optString("text", "")
+                        text = obj.optString("text", ""),
+                        audioFileName = (obj.opt("audio_file") as? String)
+                            ?.takeIf(HistoryAudioStore::isSafeFileName)
                     )
                 )
             }
@@ -219,31 +224,45 @@ class AppPreferences(context: Context) {
         return list
     }
 
-    fun addHistoryItem(text: String) {
+    fun addHistoryItem(text: String, audioFileName: String? = null) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
         val current = getHistory().toMutableList()
+        val timestamp = System.currentTimeMillis()
         val newItem = HistoryItem(
-            id = System.currentTimeMillis().toString(),
-            timestamp = System.currentTimeMillis(),
-            text = trimmed
+            id = UUID.randomUUID().toString(),
+            timestamp = timestamp,
+            text = trimmed,
+            audioFileName = audioFileName?.takeIf(HistoryAudioStore::isSafeFileName)
         )
         current.add(0, newItem)
+        val evictedAudioFiles = mutableListOf<String?>()
         val limit = historyLimit
         while (current.size > limit) {
-            current.removeAt(current.size - 1)
+            evictedAudioFiles.add(current.removeAt(current.size - 1).audioFileName)
         }
         saveHistory(current)
+        evictedAudioFiles.forEach { HistoryAudioStore.delete(appContext, it) }
     }
 
     fun removeHistoryItem(id: String) {
         val current = getHistory().toMutableList()
+        val removed = current.filter { it.id == id }
+        if (removed.isEmpty()) return
         current.removeAll { it.id == id }
         saveHistory(current)
+        removed.forEach { HistoryAudioStore.delete(appContext, it.audioFileName) }
     }
 
     fun clearHistory() {
+        val audioFiles = getHistory().mapNotNull { it.audioFileName }
         prefs.edit().remove(KEY_HISTORY).apply()
+        audioFiles.forEach { HistoryAudioStore.delete(appContext, it) }
+    }
+
+    /** Removes audio left behind by a process crash, while preserving all history-linked clips. */
+    fun cleanupOrphanedHistoryAudio() {
+        HistoryAudioStore.retain(appContext, getHistory().map { it.audioFileName })
     }
 
     private fun saveHistory(list: List<HistoryItem>) {
@@ -253,6 +272,9 @@ class AppPreferences(context: Context) {
             obj.put("id", item.id)
             obj.put("timestamp", item.timestamp)
             obj.put("text", item.text)
+            item.audioFileName?.takeIf(HistoryAudioStore::isSafeFileName)?.let {
+                obj.put("audio_file", it)
+            }
             jsonArray.put(obj)
         }
         prefs.edit().putString(KEY_HISTORY, jsonArray.toString()).apply()

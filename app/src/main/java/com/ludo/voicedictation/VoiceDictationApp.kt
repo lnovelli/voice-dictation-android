@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
+import com.ludo.voicedictation.data.AppPreferences
 
 class VoiceDictationApp : Application() {
 
@@ -15,6 +16,7 @@ class VoiceDictationApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        AppPreferences(this).cleanupOrphanedHistoryAudio()
         createNotificationChannels()
     }
 

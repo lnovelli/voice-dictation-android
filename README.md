@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.1.6 (build 17; ARM64-only)
+## Current release: v1.1.7 (build 18; ARM64-only)
 
-Floating-button position is saved independently for portrait and landscape; each mode defaults to vertically centered at the right edge until moved. Dictation insertion avoids reusing accessibility text that may be a visible placeholder. The Vocabulary tab supports persistent custom string-replacement rules, mapping multiple case-insensitive input variants to one output in final transcripts. The new Polish tab optionally sends final transcript text and personal vocabulary to a configurable OpenAI-compatible server; it is disabled by default, defaults to the phone's loopback server, and never sends audio. HTTP is allowed only for loopback; other hosts require HTTPS. Manual update checks use the public GitHub Releases API; release metadata and APK SHA-256, package, version, and signer are verified before installation. Updates remain user-initiated, and ARM64-only packaging is unchanged.
+Floating-button position is saved independently for portrait and landscape; each mode defaults to vertically centered at the right edge until moved. Dictation insertion avoids reusing accessibility text that may be a visible placeholder. The Vocabulary tab supports persistent custom string-replacement rules. Optional AI transcript polishing is configured in its own tab, sends text only, and is off by default. The History tab now links each new successful transcription to its original full recording for playback; audio is stored in app-private, non-backed-up storage and is removed with its history entry. Manual update checks use public GitHub Releases; ARM64-only packaging is unchanged.
 
 ## Features
 
@@ -45,7 +45,8 @@ Floating-button position is saved independently for portrait and landscape; each
   - Removes literal case-insensitive Unicode whole words/phrases only, never substrings such as `um` inside `album`. Apostrophe/hyphen words and combining marks are protected; punctuation and spacing left by removals are cleaned conservatively.
   - Applies only after the single final decode, identically to floating/live/file results and history. Disable or save an empty list to preserve text. If everything is removed, normal no-speech ERROR safety applies; no empty result is submitted.
 - **Transcription History:**
-  - Automatically stores recent transcriptions with timestamps.
+  - Automatically stores recent transcripts with timestamps and saves the complete original recording as a WAV alongside each new successful entry. The History tab can play or stop each saved recording.
+  - Audio stays in app-private storage excluded from Android backups; deleting, clearing, or trimming a history entry removes its audio. Recordings are bounded to the existing 120-second capture limit and the configured history retention limit. Entries created before v1.1.7 have no audio attachment.
   - Configurable retention limit (default 10, adjustable from 5 to 50).
   - One-tap clipboard copy and deletion.
 - **GitHub Releases In-App Updates:**

@@ -1,7 +1,7 @@
 {
-  "version_code": 17,
-  "version_name": "1.1.6",
-  "download_url": "https://github.com/lnovelli/voice-dictation-android/releases/download/v1.1.6/voice-dictation.apk",
-  "sha256": "4c6f77dd69af0f92edcba4dd940f8a960bd545f8939cc2d11936b074974e698e",
-  "release_notes": "v1.1.6: Adds optional AI transcript polishing through a configurable OpenAI-compatible server. Defaults to http://127.0.0.1:11434 and model default; polishing is off until enabled. Sends transcript and vocabulary text only, never audio; HTTP is restricted to loopback and other hosts require HTTPS. Failures preserve the original ASR text for local post-processing. ARM64-only packaging and manual GitHub Releases updates are unchanged."
+  "version_code": 18,
+  "version_name": "1.1.7",
+  "download_url": "https://github.com/lnovelli/voice-dictation-android/releases/download/v1.1.7/voice-dictation.apk",
+  "sha256": "a12e1cd4d07c6fd9579502898caca5e517ad113fbec2e294383acd6949c33509",
+  "release_notes": "v1.1.7: Saves each new successful dictation's original 16 kHz mono audio as a private local WAV beside its history transcript, with playback in History. Audio is excluded from backups and removed when its history item is deleted, cleared, or evicted; recordings are capped at 120 seconds. Existing history entries have no audio. Optional AI polishing remains text-only. ARM64-only packaging and manual GitHub Releases updates are unchanged."
 }

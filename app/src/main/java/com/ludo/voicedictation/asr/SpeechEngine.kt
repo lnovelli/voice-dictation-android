@@ -16,6 +16,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.k2fsa.sherpa.onnx.*
 import com.ludo.voicedictation.data.AppPreferences
+import com.ludo.voicedictation.data.HistoryAudioStore
 import com.ludo.voicedictation.model.ModelInfo
 import com.ludo.voicedictation.model.ModelManager
 import kotlinx.coroutines.*
@@ -56,6 +57,7 @@ class SpeechEngine private constructor(private val context: Context) {
         @Volatile var cancelled = false
         var text: String? = null
         var error: String? = null
+        var historyAudioFileName: String? = null
 
         @Synchronized fun closeAudioFile() { runCatching { audioFile?.close() } }
     }
@@ -164,6 +166,18 @@ class SpeechEngine private constructor(private val context: Context) {
                                 stringReplacer.apply(spellingHints.apply(current.text.orEmpty()))
                             )
                         }
+                        if (!current.cancelled && prefs.serviceEnabled && !current.text.isNullOrBlank()) {
+                            val savedAudioFileName = withContext(Dispatchers.IO) {
+                                HistoryAudioStore.save(context, samples)
+                            }
+                            if (!current.cancelled && prefs.serviceEnabled) {
+                                current.historyAudioFileName = savedAudioFileName
+                            } else if (savedAudioFileName != null) {
+                                withContext(Dispatchers.IO) {
+                                    HistoryAudioStore.delete(context, savedAudioFileName)
+                                }
+                            }
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -192,6 +206,7 @@ class SpeechEngine private constructor(private val context: Context) {
                 currentStatus = "ready"
                 onStateChanged?.invoke(false, false)
                 if (current.cancelled) {
+                    HistoryAudioStore.delete(context, current.historyAudioFileName)
                     current.listener?.onFinished(null, null)
                 } else {
                     val text = current.text?.takeIf { it.isNotBlank() }
@@ -201,13 +216,16 @@ class SpeechEngine private constructor(private val context: Context) {
                         else -> null
                     }
                     if (error == null && text != null) {
-                        prefs.addHistoryItem(text)
+                        prefs.addHistoryItem(text, current.historyAudioFileName)
                         if (current.listener != null) current.listener.onFinished(text, null)
                         else onFinalResult?.invoke(text)
-                    } else if (current.listener != null) {
-                        current.listener.onFinished(null, error)
                     } else {
-                        onError?.invoke(error ?: "Dictation failed.")
+                        HistoryAudioStore.delete(context, current.historyAudioFileName)
+                        if (current.listener != null) {
+                            current.listener.onFinished(null, error)
+                        } else {
+                            onError?.invoke(error ?: "Dictation failed.")
+                        }
                     }
                 }
             }

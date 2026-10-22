@@ -38,6 +38,16 @@
             android:textSize="13sp" />
     </LinearLayout>
 
+    <TextView
+        android:id="@+id/tvHistoryAudioHint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="4dp"
+        android:layout_marginBottom="8dp"
+        android:text="@string/history_audio_hint"
+        android:textColor="@color/text_secondary"
+        android:textSize="12sp" />
+
     <!-- RecyclerView -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rvHistory"

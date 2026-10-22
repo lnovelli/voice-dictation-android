@@ -102,6 +102,11 @@
     <string name="string_replacement_cleared">All string replacements cleared</string>
     
     <string name="history_title">Transcription History</string>
+    <string name="history_audio_hint">Original audio is stored privately on this device, excluded from backups, and removed when its history entry is deleted or trimmed. Older entries have no saved audio.</string>
+    <string name="history_audio_play">Play audio</string>
+    <string name="history_audio_stop">Stop audio</string>
+    <string name="history_audio_unavailable">Audio unavailable</string>
+    <string name="history_audio_error">Could not play the saved audio.</string>
     <string name="btn_clear_history">Clear History</string>
     <string name="empty_history">No transcriptions recorded yet. Focus any text field across the system and tap the floating dictation button.</string>
     
