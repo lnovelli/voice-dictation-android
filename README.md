@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.1.9 (build 20; ARM64-only)
+## Current release: v1.2.0 (build 21; ARM64-only)
 
-Optional AI polishing now handles clear spoken self-corrections, false starts and repetitions, makes light grammar/syntax edits, and formats spoken numbers and unambiguous times as digits. It uses the supplied custom vocabulary only as a spelling/recognition hint. AI polishing remains off by default and processes text only.
+The Polish tab now lets you edit and save the transcript-polishing system prompt locally, or restore the built-in prompt. Prompt edits take effect for live polishing and History reprocessing without another app update. The prompt, final transcript and custom vocabulary are sent as text to the configured endpoint when polishing is enabled; audio is never sent. Polishing remains off by default.
 
 ## Features
 
