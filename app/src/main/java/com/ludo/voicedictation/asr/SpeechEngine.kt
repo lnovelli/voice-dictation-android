@@ -196,7 +196,8 @@ class SpeechEngine private constructor(private val context: Context) {
                                 TranscriptPolishingConfiguration(
                                     baseUrl = prefs.transcriptPolishingEndpoint,
                                     model = prefs.transcriptPolishingModel,
-                                    vocabulary = prefs.getVocabulary().toSet()
+                                    vocabulary = prefs.getVocabulary().toSet(),
+                                    systemPrompt = prefs.customTranscriptPolishingSystemPrompt ?: TranscriptPolisher.SYSTEM_PROMPT
                                 )
                             } else null
                         val polishingAllowed = prefs.transcriptPolishingEnabled &&
@@ -206,7 +207,8 @@ class SpeechEngine private constructor(private val context: Context) {
                                 baseUrl = polishingConfiguration.baseUrl,
                                 model = polishingConfiguration.model,
                                 vocabulary = polishingConfiguration.vocabulary,
-                                transcript = originalText
+                                transcript = originalText,
+                                systemPrompt = polishingConfiguration.systemPrompt
                             )
                             current.text = if (!current.cancelled && prefs.transcriptPolishingEnabled) {
                                 polishedText ?: originalText

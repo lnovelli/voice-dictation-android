@@ -6,7 +6,7 @@
     <string name="tab_history">History</string>
     <string name="tab_polishing">Polish</string>
     <string name="polishing_enabled_label">Enable AI transcript polishing</string>
-    <string name="polishing_privacy_hint">Off by default. When enabled, the final transcript and your personal vocabulary are sent as text to this configured server; audio is never sent. 127.0.0.1 refers to this phone.</string>
+    <string name="polishing_privacy_hint">Off by default. When enabled, your saved system prompt, the final transcript, and personal vocabulary are sent as text to this configured server; audio is never sent. 127.0.0.1 refers to this phone.</string>
     <string name="polishing_server_title">OpenAI-Compatible Server</string>
     <string name="polishing_server_hint">Enter the server base URL and model. For example, http://127.0.0.1:11434 with model default. The app calls /v1/chat/completions (or /chat/completions when the URL ends in /v1). HTTP is restricted to this phone; use HTTPS for other hosts.</string>
     <string name="polishing_endpoint_hint">Base URL</string>
@@ -18,8 +18,11 @@
     <string name="polishing_test_success">Connection successful. The model returned OK.</string>
     <string name="polishing_save">Save settings</string>
     <string name="polishing_test">Test connection</string>
-    <string name="polishing_prompt_title">Editing rules</string>
-    <string name="polishing_prompt_hint">The editor preserves your meaning, language, and tone while lightly fixing grammar and syntax. It removes clear false starts, immediate repetitions, and self-corrections (keeping the final intended wording), and formats spoken numbers and unambiguous times as digits. It avoids guessing or rewriting for style. Your custom vocabulary is sent with the transcript and used only as a spelling/recognition hint—not as a reason to insert a term. Both are treated as text, not instructions; your configured local filler-removal and replacement rules still run afterward.</string>
+    <string name="polishing_prompt_title">System prompt</string>
+    <string name="polishing_prompt_hint">Edit the system message used for polishing and save to apply it. It is sent to your configured server together with the transcript and custom vocabulary. The connection test uses synthetic text, not this prompt or a real transcript. Maximum 12,000 characters. Restore the built-in prompt at any time.</string>
+    <string name="polishing_prompt_field_hint">System prompt</string>
+    <string name="polishing_prompt_reset">Restore built-in prompt</string>
+    <string name="polishing_prompt_restored">Built-in prompt restored and saved.</string>
     
     <string name="model_section_title">Speech Recognition Model</string>
     <string name="model_parakeet_v2">Parakeet TDT 0.6B v2 (English)</string>
@@ -113,7 +116,7 @@
     <string name="history_audio_reprocess_done">Transcript reprocessed and updated.</string>
     <string name="history_audio_reprocess_failed">Reprocessing failed; the existing transcript was kept.</string>
     <string name="history_audio_reprocess_confirm">This will decode the saved recording again on-device with your currently selected model and replace this History transcript. No text or audio is sent to a server. The original audio is kept. Continue?</string>
-    <string name="history_audio_reprocess_polish_warning">This will decode the saved recording again and replace this History transcript; the original audio is kept. AI polishing is enabled. If you continue, the resulting transcript and your personal vocabulary (%3$d terms) will be sent as text to %1$s using model %2$s. Audio stays on this device. This retry will not be redirected if server settings change.</string>
+    <string name="history_audio_reprocess_polish_warning">This will decode the saved recording again and replace this History transcript; the original audio is kept. AI polishing is enabled. If you continue, the configured system prompt, resulting transcript, and your personal vocabulary (%3$d terms) will be sent as text to %1$s using model %2$s. Audio stays on this device. This retry will not be redirected if server settings change.</string>
     <string name="history_audio_error">Could not play the saved audio.</string>
     <string name="btn_clear_history">Clear History</string>
     <string name="empty_history">No transcriptions recorded yet. Focus any text field across the system and tap the floating dictation button.</string>

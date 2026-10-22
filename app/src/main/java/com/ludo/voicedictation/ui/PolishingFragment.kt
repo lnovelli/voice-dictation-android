@@ -14,6 +14,12 @@ import com.ludo.voicedictation.databinding.TabPolishingBinding
 import kotlinx.coroutines.launch
 
 class PolishingFragment : Fragment() {
+    private data class FormConfiguration(
+        val endpoint: String,
+        val model: String,
+        val systemPrompt: String
+    )
+
     private var _binding: TabPolishingBinding? = null
     private val binding get() = _binding!!
     private lateinit var prefs: AppPreferences
@@ -34,30 +40,44 @@ class PolishingFragment : Fragment() {
         binding.switchPolishingEnabled.isChecked = prefs.transcriptPolishingEnabled
         binding.etPolishingEndpoint.setText(prefs.transcriptPolishingEndpoint)
         binding.etPolishingModel.setText(prefs.transcriptPolishingModel)
+        binding.etPolishingPrompt.setText(
+            prefs.customTranscriptPolishingSystemPrompt ?: TranscriptPolisher.SYSTEM_PROMPT
+        )
 
         binding.switchPolishingEnabled.setOnCheckedChangeListener { _, enabled ->
             prefs.transcriptPolishingEnabled = enabled
         }
         binding.btnSavePolishing.setOnClickListener { saveConfiguration() }
         binding.btnTestPolishing.setOnClickListener { testConnection() }
+        binding.btnResetPolishingPrompt.setOnClickListener {
+            prefs.customTranscriptPolishingSystemPrompt = null
+            binding.etPolishingPrompt.setText(TranscriptPolisher.SYSTEM_PROMPT)
+            binding.tilPolishingPrompt.error = null
+            setStatus(getString(R.string.polishing_prompt_restored), isError = false)
+        }
     }
 
-    private fun currentConfiguration(): Pair<String, String>? {
+    private fun currentConfiguration(): FormConfiguration? {
         val endpoint = binding.etPolishingEndpoint.text?.toString()?.trim().orEmpty()
         val model = binding.etPolishingModel.text?.toString()?.trim().orEmpty()
+        val systemPrompt = binding.etPolishingPrompt.text?.toString().orEmpty()
         binding.tilPolishingEndpoint.error = TranscriptPolisher.validateBaseUrl(endpoint)
         binding.tilPolishingModel.error = TranscriptPolisher.validateModel(model)
-        if (binding.tilPolishingEndpoint.error != null || binding.tilPolishingModel.error != null) {
+        binding.tilPolishingPrompt.error = TranscriptPolisher.validateSystemPrompt(systemPrompt)
+        if (binding.tilPolishingEndpoint.error != null || binding.tilPolishingModel.error != null ||
+            binding.tilPolishingPrompt.error != null) {
             setStatus(getString(R.string.polishing_invalid_config), isError = true)
             return null
         }
-        return endpoint to model
+        return FormConfiguration(endpoint, model, systemPrompt)
     }
 
-    private fun saveConfiguration(): Pair<String, String>? {
+    private fun saveConfiguration(): FormConfiguration? {
         val configuration = currentConfiguration() ?: return null
-        prefs.transcriptPolishingEndpoint = configuration.first
-        prefs.transcriptPolishingModel = configuration.second
+        prefs.transcriptPolishingEndpoint = configuration.endpoint
+        prefs.transcriptPolishingModel = configuration.model
+        prefs.customTranscriptPolishingSystemPrompt = configuration.systemPrompt
+            .takeUnless { it == TranscriptPolisher.SYSTEM_PROMPT }
         setStatus(getString(R.string.polishing_saved), isError = false)
         return configuration
     }
@@ -68,7 +88,7 @@ class PolishingFragment : Fragment() {
         binding.btnSavePolishing.isEnabled = false
         setStatus(getString(R.string.polishing_testing), isError = false)
         viewLifecycleOwner.lifecycleScope.launch {
-            val error = polisher.testConnection(configuration.first, configuration.second)
+            val error = polisher.testConnection(configuration.endpoint, configuration.model)
             val currentBinding = _binding ?: return@launch
             currentBinding.btnTestPolishing.isEnabled = true
             currentBinding.btnSavePolishing.isEnabled = true

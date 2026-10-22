@@ -18,6 +18,7 @@ import com.ludo.voicedictation.data.AppPreferences
 import com.ludo.voicedictation.data.HistoryAudioStore
 import com.ludo.voicedictation.data.HistoryItem
 import com.ludo.voicedictation.asr.SpeechEngine
+import com.ludo.voicedictation.asr.TranscriptPolisher
 import com.ludo.voicedictation.asr.TranscriptPolishingConfiguration
 import com.ludo.voicedictation.databinding.TabHistoryBinding
 import java.lang.ref.WeakReference
@@ -162,7 +163,8 @@ class HistoryFragment : Fragment() {
             TranscriptPolishingConfiguration(
                 baseUrl = prefs.transcriptPolishingEndpoint,
                 model = prefs.transcriptPolishingModel,
-                vocabulary = prefs.getVocabulary().toSet()
+                vocabulary = prefs.getVocabulary().toSet(),
+                systemPrompt = prefs.customTranscriptPolishingSystemPrompt ?: TranscriptPolisher.SYSTEM_PROMPT
             )
         } else null
         val message = if (polishingConfiguration != null) {

@@ -43,6 +43,8 @@ class AppPreferences(context: Context) {
         private const val KEY_TRANSCRIPT_POLISHING_ENABLED = "transcript_polishing_enabled"
         private const val KEY_TRANSCRIPT_POLISHING_ENDPOINT = "transcript_polishing_endpoint"
         private const val KEY_TRANSCRIPT_POLISHING_MODEL = "transcript_polishing_model"
+        private const val KEY_TRANSCRIPT_POLISHING_SYSTEM_PROMPT = "transcript_polishing_system_prompt"
+        private const val MAX_TRANSCRIPT_POLISHING_SYSTEM_PROMPT_CHARACTERS = 12_000
         const val DEFAULT_TRANSCRIPT_POLISHING_ENDPOINT = "http://127.0.0.1:11434"
         const val DEFAULT_TRANSCRIPT_POLISHING_MODEL = "default"
         val DEFAULT_TRANSCRIPT_REMOVALS: List<String> = listOf("um", "uhm", "uh")
@@ -64,6 +66,19 @@ class AppPreferences(context: Context) {
         get() = prefs.getString(KEY_TRANSCRIPT_POLISHING_MODEL, DEFAULT_TRANSCRIPT_POLISHING_MODEL)
             ?.takeIf { it.length in 1..128 } ?: DEFAULT_TRANSCRIPT_POLISHING_MODEL
         set(value) = prefs.edit().putString(KEY_TRANSCRIPT_POLISHING_MODEL, value.take(128)).apply()
+
+    /** Null means use the built-in prompt; custom text is bounded and stored locally. */
+    var customTranscriptPolishingSystemPrompt: String?
+        get() = prefs.getString(KEY_TRANSCRIPT_POLISHING_SYSTEM_PROMPT, null)
+            ?.takeIf { it.isNotBlank() && it.length <= MAX_TRANSCRIPT_POLISHING_SYSTEM_PROMPT_CHARACTERS }
+        set(value) {
+            val editor = prefs.edit()
+            if (value == null) editor.remove(KEY_TRANSCRIPT_POLISHING_SYSTEM_PROMPT)
+            else if (value.length <= MAX_TRANSCRIPT_POLISHING_SYSTEM_PROMPT_CHARACTERS) {
+                editor.putString(KEY_TRANSCRIPT_POLISHING_SYSTEM_PROMPT, value)
+            } else return
+            editor.apply()
+        }
 
     var serviceEnabled: Boolean
         get() = prefs.getBoolean("service_enabled", true)
