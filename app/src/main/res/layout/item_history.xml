@@ -51,12 +51,30 @@
         android:textSize="14sp"
         android:lineSpacingExtra="2dp" />
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnPlayHistoryAudio"
-        style="@style/Widget.Material3.Button.OutlinedButton"
-        android:layout_width="wrap_content"
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="@string/history_audio_play" />
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnPlayHistoryAudio"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="6dp"
+            android:text="@string/history_audio_play" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnReprocessHistoryAudio"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="6dp"
+            android:text="@string/history_audio_reprocess" />
+
+    </LinearLayout>
 
 </LinearLayout>

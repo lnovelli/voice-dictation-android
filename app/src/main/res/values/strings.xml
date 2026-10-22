@@ -102,10 +102,18 @@
     <string name="string_replacement_cleared">All string replacements cleared</string>
     
     <string name="history_title">Transcription History</string>
-    <string name="history_audio_hint">Original audio is stored privately on this device, excluded from backups, and removed when its history entry is deleted or trimmed. Older entries have no saved audio.</string>
+    <string name="history_audio_hint">Original audio is stored privately on this device, excluded from backups, and removed when its history entry is deleted or trimmed. Reprocess decodes again with acoustic hotword bias disabled and replaces the transcript only; older entries have no saved audio.</string>
     <string name="history_audio_play">Play audio</string>
     <string name="history_audio_stop">Stop audio</string>
+    <string name="history_audio_reprocess">Reprocess</string>
+    <string name="history_audio_reprocess_cancel">Cancel retry</string>
+    <string name="history_audio_reprocessing">Cancelling…</string>
     <string name="history_audio_unavailable">Audio unavailable</string>
+    <string name="history_audio_reprocess_unavailable">Cannot reprocess: audio, model, or service unavailable.</string>
+    <string name="history_audio_reprocess_done">Transcript reprocessed and updated.</string>
+    <string name="history_audio_reprocess_failed">Reprocessing failed; the existing transcript was kept.</string>
+    <string name="history_audio_reprocess_confirm">This will decode the saved recording again on-device with your currently selected model and replace this History transcript. No text or audio is sent to a server. The original audio is kept. Continue?</string>
+    <string name="history_audio_reprocess_polish_warning">This will decode the saved recording again and replace this History transcript; the original audio is kept. AI polishing is enabled. If you continue, the resulting transcript and your personal vocabulary (%3$d terms) will be sent as text to %1$s using model %2$s. Audio stays on this device. This retry will not be redirected if server settings change.</string>
     <string name="history_audio_error">Could not play the saved audio.</string>
     <string name="btn_clear_history">Clear History</string>
     <string name="empty_history">No transcriptions recorded yet. Focus any text field across the system and tap the floating dictation button.</string>

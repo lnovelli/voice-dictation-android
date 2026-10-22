@@ -17,7 +17,10 @@ import com.ludo.voicedictation.R
 import com.ludo.voicedictation.data.AppPreferences
 import com.ludo.voicedictation.data.HistoryAudioStore
 import com.ludo.voicedictation.data.HistoryItem
+import com.ludo.voicedictation.asr.SpeechEngine
+import com.ludo.voicedictation.asr.TranscriptPolishingConfiguration
 import com.ludo.voicedictation.databinding.TabHistoryBinding
+import java.lang.ref.WeakReference
 
 class HistoryFragment : Fragment() {
 
@@ -28,6 +31,9 @@ class HistoryFragment : Fragment() {
     private lateinit var adapter: HistoryAdapter
     private var mediaPlayer: MediaPlayer? = null
     private var playingAudioItemId: String? = null
+    private val reprocessOwner = Any()
+    private var reprocessingItemId: String? = null
+    private var reprocessCancelling = false
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -63,11 +69,13 @@ class HistoryFragment : Fragment() {
             },
             onDeleteClicked = { item ->
                 if (playingAudioItemId == item.id) stopAudioPlayback()
+                if (reprocessingItemId == item.id) cancelAudioReprocess()
                 prefs.removeHistoryItem(item.id)
                 refreshList()
                 Toast.makeText(requireContext(), "Transcription and recording deleted", Toast.LENGTH_SHORT).show()
             },
             onPlayAudioClicked = ::toggleAudioPlayback,
+            onReprocessAudioClicked = ::requestAudioReprocess,
             hasAudio = { item -> HistoryAudioStore.find(requireContext(), item.audioFileName) != null }
         )
 
@@ -85,6 +93,7 @@ class HistoryFragment : Fragment() {
                 .setMessage("Delete all ${history.size} saved transcriptions and their recordings?")
                 .setPositiveButton("Clear All") { _, _ ->
                     stopAudioPlayback()
+                    if (reprocessingItemId != null) cancelAudioReprocess()
                     prefs.clearHistory()
                     refreshList()
                     Toast.makeText(requireContext(), "History and recordings cleared", Toast.LENGTH_SHORT).show()
@@ -141,6 +150,101 @@ class HistoryFragment : Fragment() {
         } catch (_: Exception) {
             finishAudioPlayback(player)
             showPlaybackError()
+        }
+    }
+
+    private fun requestAudioReprocess(item: HistoryItem) {
+        if (reprocessingItemId != null) {
+            if (reprocessingItemId == item.id) cancelAudioReprocess()
+            return
+        }
+        val polishingConfiguration = if (prefs.transcriptPolishingEnabled) {
+            TranscriptPolishingConfiguration(
+                baseUrl = prefs.transcriptPolishingEndpoint,
+                model = prefs.transcriptPolishingModel,
+                vocabulary = prefs.getVocabulary().toSet()
+            )
+        } else null
+        val message = if (polishingConfiguration != null) {
+            getString(
+                R.string.history_audio_reprocess_polish_warning,
+                polishingConfiguration.baseUrl,
+                polishingConfiguration.model,
+                polishingConfiguration.vocabulary.size
+            )
+        } else getString(R.string.history_audio_reprocess_confirm)
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.history_audio_reprocess)
+            .setMessage(message)
+            .setPositiveButton(R.string.history_audio_reprocess) { _, _ ->
+                beginAudioReprocess(item, polishingConfiguration)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun beginAudioReprocess(
+        item: HistoryItem,
+        polishingConfiguration: TranscriptPolishingConfiguration?
+    ) {
+        val audioFileName = item.audioFileName
+        if (audioFileName == null || HistoryAudioStore.find(requireContext(), audioFileName) == null) {
+            Toast.makeText(requireContext(), R.string.history_audio_unavailable, Toast.LENGTH_SHORT).show()
+            refreshList()
+            return
+        }
+        stopAudioPlayback()
+        reprocessingItemId = item.id
+        reprocessCancelling = false
+        adapter.setReprocessingItemId(item.id)
+
+        val preferences = prefs
+        val fragment = WeakReference(this)
+        val listener = object : SpeechEngine.ExternalListener {
+            override fun onState(state: String) = Unit
+
+            override fun onFinished(text: String?, error: String?) {
+                val updated = text?.let { preferences.updateHistoryTranscript(item.id, it) } == true
+                fragment.get()?.finishAudioReprocess(item.id, updated, text != null, error)
+            }
+        }
+        val authorizedPolishing = polishingConfiguration?.takeIf { prefs.transcriptPolishingEnabled }
+        if (!SpeechEngine.getInstance(requireContext()).startHistoryReprocess(
+                reprocessOwner,
+                audioFileName,
+                listener,
+                authorizedPolishing
+            )) {
+            reprocessingItemId = null
+            reprocessCancelling = false
+            adapter.setReprocessingItemId(null)
+            Toast.makeText(requireContext(), R.string.history_audio_reprocess_unavailable, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun cancelAudioReprocess() {
+        val itemId = reprocessingItemId ?: return
+        if (reprocessCancelling) return
+        reprocessCancelling = true
+        adapter.setReprocessingItemId(itemId, cancelling = true)
+        SpeechEngine.getInstance(requireContext()).cancelHistoryReprocess(reprocessOwner)
+    }
+
+    private fun finishAudioReprocess(itemId: String, updated: Boolean, hadText: Boolean, error: String?) {
+        if (reprocessingItemId == itemId) {
+            reprocessingItemId = null
+            reprocessCancelling = false
+            if (::adapter.isInitialized && _binding != null) adapter.setReprocessingItemId(null)
+        }
+        if (_binding != null && isAdded) {
+            val message = when {
+                updated -> R.string.history_audio_reprocess_done
+                hadText -> null // The history entry was deleted before completion.
+                error != null -> R.string.history_audio_reprocess_failed
+                else -> null // User cancelled; preserve the current transcript.
+            }
+            message?.let { Toast.makeText(requireContext(), it, Toast.LENGTH_LONG).show() }
+            if (::adapter.isInitialized) refreshList()
         }
     }
 

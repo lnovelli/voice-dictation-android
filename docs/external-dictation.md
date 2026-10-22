@@ -139,16 +139,17 @@ be ignored.
 
 | `Message.what` | Name | Additional Bundle key | Meaning |
 | --- | --- | --- | --- |
-| `101` | STATE | `state`: String | `recording`, `recording_limit`, `loading`, or `processing` |
+| `101` | STATE | `state`: String | `starting`, `recording`, `recording_limit`, `loading`, or `processing` |
 | `102` | PARTIAL | `text`: String | Reserved for protocol compatibility; **never emitted** in 1.0.8. |
 | `103` | RESULT | `text`: String | Nonempty final transcript after final decode and complete engine cleanup. |
 | `104` | ERROR | `error`: String | Human-readable failure, validation error, busy rejection, or timeout. |
 
-Typical live flow: START → recording → STOP → loading → processing → RESULT/ERROR.
-Cap flow: START → recording → recording_limit → [wait for STOP/CANCEL] → STOP →
+Typical live flow: START → starting → recording → STOP → loading → processing → RESULT/ERROR.
+Cap flow: START → starting → recording → recording_limit → [wait for STOP/CANCEL] → STOP →
 loading → processing → RESULT/ERROR. States may repeat; no mandatory idle event.
-`recording` is sent when the session accepts capture (before microphone startup
-completes); startup failure is terminal ERROR. `recording_limit` means the microphone
+`starting` means the session is accepted but the microphone is not yet recording;
+Stop/Cancel remains available. `recording` is sent only after AudioRecord reports
+active capture; startup failure is terminal ERROR. `recording_limit` means the microphone
 has been stopped/released, original bounded PCM is retained, and **no ASR has run**.
 Clients must map both `recording` and `recording_limit` to their recording/Stop-ready
 state. Show a limit toast for `recording_limit`; keep Stop/Cancel available and do not

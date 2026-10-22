@@ -31,6 +31,7 @@ class SpeechEngine private constructor(private val context: Context) {
         // 120 seconds of mono, signed 16-bit little-endian raw PCM. No WAV header.
         private const val MAX_FILE_BYTES = 3_840_000L
         private const val CAPTURE_READ_SAMPLES = 1024
+        private const val STOP_DRAIN_TIMEOUT_MS = 200L
         private const val MAX_LIVE_SAMPLES = SAMPLE_RATE * 120
         private val HOTWORD_PATTERN = Regex("""^[\p{L}\p{M}\p{N}]+(?:[- '’][\p{L}\p{M}\p{N}]+)*$""")
         @Volatile private var instance: SpeechEngine? = null
@@ -50,7 +51,10 @@ class SpeechEngine private constructor(private val context: Context) {
     private class Session(
         val owner: Any? = null,
         val listener: ExternalListener? = null,
-        val audioFile: ParcelFileDescriptor? = null
+        val audioFile: ParcelFileDescriptor? = null,
+        val historyAudioInputFileName: String? = null,
+        val historyReprocessOwner: Any? = null,
+        val historyPolishingConfiguration: TranscriptPolishingConfiguration? = null
     ) {
         val stopRequested = CompletableDeferred<Unit>()
         @Volatile var stopped = false
@@ -58,6 +62,7 @@ class SpeechEngine private constructor(private val context: Context) {
         var text: String? = null
         var error: String? = null
         var historyAudioFileName: String? = null
+        @Volatile var stopDrainTimeout: Runnable? = null
 
         @Synchronized fun closeAudioFile() { runCatching { audioFile?.close() } }
     }
@@ -70,7 +75,9 @@ class SpeechEngine private constructor(private val context: Context) {
         val hotwords: List<String>
     )
 
-    val isExternalSessionActive: Boolean get() = session?.owner != null
+    val isExternalSessionActive: Boolean get() = session?.let {
+        it.owner != null && it.owner !== historyReprocessOwnerMarker
+    } == true
     val isLocalSessionActive: Boolean get() = session?.let { it.owner == null && !it.cancelled } == true
     val isBusy: Boolean get() = session != null || sessionJob?.isActive == true || releaseJob?.isActive == true
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -90,6 +97,7 @@ class SpeechEngine private constructor(private val context: Context) {
     private var session: Session? = null
     private var sessionJob: Job? = null
     private var releaseJob: Job? = null
+    private val historyReprocessOwnerMarker = Any()
 
     @Volatile var isRecording = false
         private set
@@ -118,43 +126,86 @@ class SpeechEngine private constructor(private val context: Context) {
     fun startExternalFile(owner: Any, listener: ExternalListener, audioFile: ParcelFileDescriptor): Boolean =
         startSession(Session(owner, listener, audioFile))
 
+    /** User-requested retry; results never reach overlay insertion or clipboard. */
+    fun startHistoryReprocess(
+        owner: Any,
+        audioFileName: String,
+        listener: ExternalListener,
+        polishingConfiguration: TranscriptPolishingConfiguration? = null
+    ): Boolean {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        if (!HistoryAudioStore.isSafeFileName(audioFileName) ||
+            HistoryAudioStore.find(context, audioFileName) == null) return false
+        return startSession(Session(
+            owner = historyReprocessOwnerMarker,
+            listener = listener,
+            historyAudioInputFileName = audioFileName,
+            historyReprocessOwner = owner,
+            historyPolishingConfiguration = polishingConfiguration
+        ))
+    }
+
+    fun cancelHistoryReprocess(owner: Any) {
+        session?.takeIf { it.historyReprocessOwner === owner }?.let {
+            it.cancelled = true
+            stopSession(it)
+        }
+    }
+
     private fun startSession(current: Session): Boolean {
         check(Looper.myLooper() == Looper.getMainLooper())
         if (!prefs.serviceEnabled || isBusy) return false
-        if (current.audioFile == null &&
+        val hasCompletedAudio = current.audioFile != null || current.historyAudioInputFileName != null
+        if (current.historyAudioInputFileName != null &&
+            HistoryAudioStore.find(context, current.historyAudioInputFileName) == null) return false
+        if (!hasCompletedAudio &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             if (current.listener == null) onError?.invoke("Grant microphone permission in Settings before dictating.")
             return false
         }
         session = current
-        // Live capture is PCM-only: do not load a model or touch native ASR until Stop.
-        setState(current.audioFile == null, current.audioFile != null,
-            if (current.audioFile == null) "recording" else "loading")
+        // Keep the control active during mic startup, but expose a distinct not-yet-recording state.
+        setState(!hasCompletedAudio, true, if (hasCompletedAudio) "loading" else "starting")
         val job = scope.launch {
             try {
                 val samples = withContext(Dispatchers.IO) {
-                    if (current.audioFile != null) readAudioFile(current) else captureRecording(current)
+                    when {
+                        current.audioFile != null -> readAudioFile(current)
+                        current.historyAudioInputFileName != null ->
+                            HistoryAudioStore.readSamples(context, current.historyAudioInputFileName)
+                        else -> captureRecording(current)
+                    }
                 }
                 if (!current.cancelled && prefs.serviceEnabled && samples.isNotEmpty()) {
                     setState(false, true, "loading")
                     current.text = withContext(Dispatchers.Default) {
                         nativeLock.withLock {
                             if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
-                            initializeEngine()
+                            initializeEngine(forceUnbiased = current.historyAudioInputFileName != null)
                             if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
                             withContext(Dispatchers.Main) {
                                 if (!current.cancelled) setState(false, true, "processing")
                             }
-                            decodeRecording(samples, current)
+                            decodeRecording(samples, current, reprocessInWindows = current.historyAudioInputFileName != null)
                         }
                     }
                     val originalText = current.text.orEmpty()
                     if (!current.cancelled && prefs.serviceEnabled && originalText.isNotBlank()) {
-                        if (prefs.transcriptPolishingEnabled) {
+                        val polishingConfiguration = current.historyPolishingConfiguration ?:
+                            if (current.historyAudioInputFileName == null && prefs.transcriptPolishingEnabled) {
+                                TranscriptPolishingConfiguration(
+                                    baseUrl = prefs.transcriptPolishingEndpoint,
+                                    model = prefs.transcriptPolishingModel,
+                                    vocabulary = prefs.getVocabulary().toSet()
+                                )
+                            } else null
+                        val polishingAllowed = prefs.transcriptPolishingEnabled &&
+                            (current.historyAudioInputFileName == null || current.historyPolishingConfiguration != null)
+                        if (polishingAllowed && polishingConfiguration != null) {
                             val polishedText = transcriptPolisher.polish(
-                                baseUrl = prefs.transcriptPolishingEndpoint,
-                                model = prefs.transcriptPolishingModel,
-                                vocabulary = prefs.getVocabulary(),
+                                baseUrl = polishingConfiguration.baseUrl,
+                                model = polishingConfiguration.model,
+                                vocabulary = polishingConfiguration.vocabulary,
                                 transcript = originalText
                             )
                             current.text = if (!current.cancelled && prefs.transcriptPolishingEnabled) {
@@ -166,7 +217,8 @@ class SpeechEngine private constructor(private val context: Context) {
                                 stringReplacer.apply(spellingHints.apply(current.text.orEmpty()))
                             )
                         }
-                        if (!current.cancelled && prefs.serviceEnabled && !current.text.isNullOrBlank()) {
+                        if (!current.cancelled && prefs.serviceEnabled && !current.text.isNullOrBlank() &&
+                            current.historyAudioInputFileName == null) {
                             val savedAudioFileName = withContext(Dispatchers.IO) {
                                 HistoryAudioStore.save(context, samples)
                             }
@@ -269,7 +321,7 @@ class SpeechEngine private constructor(private val context: Context) {
     }
 
     // All native creation, decoding and destruction run under nativeLock, never on the UI thread.
-    private fun initializeEngine() {
+    private fun initializeEngine(forceUnbiased: Boolean = false) {
         val model = ModelInfo.getModelById(prefs.selectedModelId)
         // Snapshot vocabulary and post-processing options only after explicit Stop/completed-file capture.
         val vocabulary = prefs.getVocabulary().toSet()
@@ -281,7 +333,7 @@ class SpeechEngine private constructor(private val context: Context) {
         )
         stringReplacer = CustomStringReplacer(prefs.getStringReplacementRules())
 
-        val safeHotwords = if (prefs.acousticVocabularyEnabled) {
+        val safeHotwords = if (!forceUnbiased && prefs.acousticVocabularyEnabled) {
             vocabulary.asSequence()
                 .map { it.trim().replace(Regex("""\s+"""), " ") }
                 .filter { it.length in 1..80 && HOTWORD_PATTERN.matches(it) }
@@ -388,13 +440,30 @@ class SpeechEngine private constructor(private val context: Context) {
                     recorder = audio
                 }
             }
-            while (!current.stopped && !current.cancelled && count < recording.size) {
-                // Write successful short reads directly into the authoritative bounded PCM.
-                val read = audio.read(recording, count, minOf(CAPTURE_READ_SAMPLES, recording.size - count))
+            if (audio.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                withContext(Dispatchers.Main.immediate) {
+                    if (session === current && !current.stopped && !current.cancelled) {
+                        setState(true, false, "recording")
+                    }
+                }
+            }
+            while (!current.cancelled && count < recording.size) {
+                // Stop may release a blocked read while captured frames remain buffered.
+                // Retain its result, then drain available frames without blocking.
+                val stopped = current.stopped
+                val requested = minOf(CAPTURE_READ_SAMPLES, recording.size - count)
+                val read = if (stopped) {
+                    audio.read(recording, count, requested, AudioRecord.READ_NON_BLOCKING)
+                } else {
+                    audio.read(recording, count, requested, AudioRecord.READ_BLOCKING)
+                }
+                if (read > 0) {
+                    count += read
+                    continue
+                }
                 if (current.cancelled) break
-                if (read <= 0 && current.stopped) break
+                if (current.stopped) break
                 check(read > 0) { "Microphone read failed ($read)." }
-                count += read
             }
         } finally {
             // Release the microphone BEFORE waiting at the cap or initializing native ASR.
@@ -406,6 +475,8 @@ class SpeechEngine private constructor(private val context: Context) {
                     }
                 } finally { audio.release() }
             }
+            current.stopDrainTimeout?.let(mainHandler::removeCallbacks)
+            current.stopDrainTimeout = null
         }
         if (!current.stopped && !current.cancelled && count == MAX_LIVE_SAMPLES) {
             withContext(Dispatchers.Main) {
@@ -422,22 +493,35 @@ class SpeechEngine private constructor(private val context: Context) {
         return FloatArray(count) { recording[it] / 32768f }
     }
 
-    /** Exactly one contiguous-recording native call, after lossless endpoint selection.
-     * Native inference cannot be interrupted; retain ownership until cleanup returns.
-     */
-    private fun decodeRecording(samples: FloatArray, current: Session): String {
+    /** Final-only decode; history reprocessing may use contiguous bounded windows. */
+    private fun decodeRecording(
+        samples: FloatArray,
+        current: Session,
+        reprocessInWindows: Boolean = false
+    ): String {
         if (current.cancelled || !prefs.serviceEnabled) return ""
         require(samples.isNotEmpty() && samples.size <= MAX_LIVE_SAMPLES) { "Recording duration exceeded." }
-        // Only exact-zero endpoints are eligible, once after explicit Stop/completed-file
-        // capture. Preserve every nonzero sample and every internal pause in one range.
         val endpoints = FinalAudioPolicy.endpointRange(samples, SAMPLE_RATE)
         val finalSamples = if (endpoints.start == 0 && endpoints.endExclusive == samples.size) samples
             else samples.copyOfRange(endpoints.start, endpoints.endExclusive)
         if (current.cancelled || !prefs.serviceEnabled) return ""
         Log.i(TAG, "Final PCM endpoints ${endpoints.start}..${endpoints.endExclusive} of ${samples.size}; exact-zero only")
-        val text = decode(finalSamples, current)
+        val text = if (reprocessInWindows) decodeInWindows(finalSamples, current) else decode(finalSamples, current)
         if (current.cancelled || !prefs.serviceEnabled) return ""
         return text
+    }
+
+    private fun decodeInWindows(samples: FloatArray, current: Session): String {
+        val windows = FinalAudioPolicy.reprocessWindows(samples, SAMPLE_RATE)
+        Log.i(TAG, "History retry using ${windows.size} decode window(s) for ${samples.size} samples")
+        val results = ArrayList<String>(windows.size)
+        for (window in windows) {
+            if (current.cancelled || !prefs.serviceEnabled) return ""
+            val text = decode(samples.copyOfRange(window.start, window.endExclusive), current).trim()
+            if (current.cancelled || !prefs.serviceEnabled) return ""
+            if (text.isNotBlank()) results += text
+        }
+        return results.joinToString(" ")
     }
 
     private fun decode(samples: FloatArray, current: Session): String {
@@ -471,11 +555,23 @@ class SpeechEngine private constructor(private val context: Context) {
 
     private fun stopSession(current: Session) {
         if (current.cancelled) current.closeAudioFile()
-        // A file is already complete: STOP is a safe no-op, only CANCEL discards its result.
-        if (current.audioFile != null) return
+        // Completed files already exist: STOP is a no-op; only CANCEL discards their result.
+        if (current.audioFile != null || current.historyAudioInputFileName != null) return
         current.stopped = true
         current.stopRequested.complete(Unit)
-        stopMicrophone()
+        // On ordinary Stop, let the capture thread consume the in-flight read and
+        // non-blockingly drain queued frames before it stops/releases AudioRecord.
+        // Cancellation remains immediate and discards all collected PCM.
+        val noActiveRecorder = synchronized(recorderLock) { recorder == null }
+        if (current.cancelled || noActiveRecorder) {
+            stopMicrophone()
+        } else {
+            val fallbackStop = Runnable {
+                if (session === current && current.stopped && !current.cancelled) stopMicrophone()
+            }
+            current.stopDrainTimeout = fallbackStop
+            mainHandler.postDelayed(fallbackStop, STOP_DRAIN_TIMEOUT_MS)
+        }
         if (sessionJob?.isActive == true) setState(false, true, "loading")
     }
 

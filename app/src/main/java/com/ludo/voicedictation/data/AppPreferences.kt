@@ -245,6 +245,18 @@ class AppPreferences(context: Context) {
         evictedAudioFiles.forEach { HistoryAudioStore.delete(appContext, it) }
     }
 
+    /** Replaces only the transcript; preserves the history ID, timestamp and original recording. */
+    fun updateHistoryTranscript(id: String, text: String): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return false
+        val current = getHistory().toMutableList()
+        val index = current.indexOfFirst { it.id == id }
+        if (index < 0) return false
+        current[index] = current[index].copy(text = trimmed)
+        saveHistory(current)
+        return true
+    }
+
     fun removeHistoryItem(id: String) {
         val current = getHistory().toMutableList()
         val removed = current.filter { it.id == id }

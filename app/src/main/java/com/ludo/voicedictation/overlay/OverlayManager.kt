@@ -382,14 +382,21 @@ class OverlayManager(private val context: Context) {
     }
 
     private fun onOverlayClicked() {
-        if (!prefs.serviceEnabled || speechEngine.isExternalSessionActive || speechEngine.isProcessing) return
+        if (!prefs.serviceEnabled || speechEngine.isExternalSessionActive) return
+        if (speechEngine.currentStatus == "starting") {
+            speechEngine.stopRecording()
+            overlayView?.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+            overlayView?.announceForAccessibility("Recording stopped. Transcribing.")
+            return
+        }
+        if (speechEngine.isProcessing) return
         if (speechEngine.isRecording) {
             speechEngine.stopRecording()
             overlayView?.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
             overlayView?.announceForAccessibility("Recording stopped. Transcribing.")
         } else if (speechEngine.startRecording()) {
             overlayView?.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
-            overlayView?.announceForAccessibility("Recording. Tap to stop and transcribe. Hold to discard.")
+            overlayView?.announceForAccessibility("Starting recording. Tap to stop and transcribe. Hold to discard.")
         }
     }
 
@@ -402,6 +409,7 @@ class OverlayManager(private val context: Context) {
             externalSession && speechEngine.isAwaitingStop -> "Recording limit reached; stop or cancel in Hermes"
             externalSession && isRecording -> "Recording controlled by Hermes"
             externalSession -> "Dictation controlled by Hermes"
+            speechEngine.currentStatus == "starting" -> "Starting recording. Tap to stop and transcribe. Hold to discard."
             speechEngine.currentStatus == "loading" -> "Loading recognition model"
             isProcessing -> "Transcribing recording"
             speechEngine.isAwaitingStop -> "Recording limit reached. Tap to transcribe. Hold to discard."

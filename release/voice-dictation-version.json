@@ -1,7 +1,7 @@
 {
-  "version_code": 18,
-  "version_name": "1.1.7",
-  "download_url": "https://github.com/lnovelli/voice-dictation-android/releases/download/v1.1.7/voice-dictation.apk",
-  "sha256": "a12e1cd4d07c6fd9579502898caca5e517ad113fbec2e294383acd6949c33509",
-  "release_notes": "v1.1.7: Saves each new successful dictation's original 16 kHz mono audio as a private local WAV beside its history transcript, with playback in History. Audio is excluded from backups and removed when its history item is deleted, cleared, or evicted; recordings are capped at 120 seconds. Existing history entries have no audio. Optional AI polishing remains text-only. ARM64-only packaging and manual GitHub Releases updates are unchanged."
+  "version_code": 19,
+  "version_name": "1.1.8",
+  "download_url": "https://github.com/lnovelli/voice-dictation-android/releases/download/v1.1.8/voice-dictation.apk",
+  "sha256": "4f094ca89bec140a97ca1902a3c7331cefb9dcac99591a56905c1154ef8188b0",
+  "release_notes": "v1.1.8: Reports recording only after microphone startup; drains available buffered PCM on Stop with a bounded stop fallback. Incomplete AI-polishing responses now preserve the local transcript. History adds a reprocess action that replaces the transcript only, keeps the original audio/history entry, disables experimental acoustic bias, and uses lossless non-overlapping low-energy windows for long retries. ARM64-only; updates remain manual."
 }

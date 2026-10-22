@@ -14,6 +14,12 @@ import java.net.URI
 import java.net.URL
 import java.net.UnknownHostException
 
+data class TranscriptPolishingConfiguration(
+    val baseUrl: String,
+    val model: String,
+    val vocabulary: Set<String>
+)
+
 /** OpenAI-compatible, non-streaming chat-completions client for final transcript polishing. */
 class TranscriptPolisher {
     companion object {
@@ -167,10 +173,13 @@ Do not remove fillers, repetitions, or fragments; the app handles filler removal
             } catch (_: Exception) {
                 throw PolisherException("The server response was not valid OpenAI-compatible JSON.")
             }
-            val content = response.optJSONArray("choices")
-                ?.optJSONObject(0)
-                ?.optJSONObject("message")
-                ?.opt("content") as? String
+            val choice = response.optJSONArray("choices")?.optJSONObject(0)
+                ?: throw PolisherException("The server response did not contain a completion choice.")
+            val finishReason = choice.optString("finish_reason", "").trim()
+            if (finishReason.isNotEmpty() && finishReason != "stop") {
+                throw PolisherException("The server returned an incomplete transcript; the original was kept.")
+            }
+            val content = choice.optJSONObject("message")?.opt("content") as? String
             return content?.takeIf { it.isNotBlank() }
                 ?: throw PolisherException("The server response did not contain message text.")
         } finally {
