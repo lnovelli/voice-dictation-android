@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.1.8 (build 19; ARM64-only)
+## Current release: v1.1.9 (build 20; ARM64-only)
 
-Recording status is reported only after the microphone starts; explicit Stop drains available buffered PCM before finalization. The History tab saves, plays, and can reprocess the original recording; long history retries use bounded, non-overlapping windows while preserving every sample. A truncated optional polishing response is rejected in favor of the local ASR result. Optional AI transcript polishing remains off by default and processes text only.
+Optional AI polishing now handles clear spoken self-corrections, false starts and repetitions, makes light grammar/syntax edits, and formats spoken numbers and unambiguous times as digits. It uses the supplied custom vocabulary only as a spelling/recognition hint. AI polishing remains off by default and processes text only.
 
 ## Features
 
@@ -38,7 +38,7 @@ Recording status is reported only after the microphone starts; explicit Stop dra
 - **Optional AI Transcript Polishing:**
   - The Polish tab configures and tests an OpenAI-compatible chat-completions endpoint and model. Defaults are `http://127.0.0.1:11434` and `default`; the master switch is off until explicitly enabled.
   - Sends only the final transcript and custom vocabulary as text, never audio. HTTP is restricted to `127.0.0.1`/`localhost`; external hosts require HTTPS. A bounded timeout, response-size limit, and no-redirect policy apply.
-  - The fixed accuracy-first prompt preserves language, meaning, tone, names, numbers and uncertain wording; it corrects clear errors without translating, summarizing or rewriting for style. Vocabulary is a hint only. Fillers, repetitions and fragments remain for the app's separate removal setting.
+  - The fixed prompt preserves the speaker’s meaning, language and tone while lightly fixing grammar, syntax and clear recognition errors. It removes clear self-corrections, false starts and immediate repetitions, formats spoken numeric values and unambiguous times as digits, and avoids guessing or rewriting for style. The transcript and custom vocabulary are sent together as structured text; vocabulary is used only as a spelling/recognition hint. The configured local filler-removal and replacement rules still run afterward.
   - On connection, HTTP, timeout, malformed-response or empty-output failures, the original ASR transcript proceeds through the existing local post-processing.
 - **Editable Final-Transcript Removal List:**
   - Enabled by default with conservative fillers `um`, `uhm`, `uh` (not ambiguous `ah`, `like` or `so`). Settings provides a switch, one-word/phrase-per-line editor, Save and Restore Defaults.

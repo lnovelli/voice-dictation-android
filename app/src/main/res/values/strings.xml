@@ -19,7 +19,7 @@
     <string name="polishing_save">Save settings</string>
     <string name="polishing_test">Test connection</string>
     <string name="polishing_prompt_title">Editing rules</string>
-    <string name="polishing_prompt_hint">The editor makes conservative spelling, punctuation, grammar, and clear speech-recognition corrections. It preserves the original language, meaning, tone, names, numbers, dates, negations, and identifiers; it does not translate, summarize, add facts, or rewrite for style. Your vocabulary is only a spelling/recognition hint, never a reason to insert a word. Uncertain text, fillers, repetitions, and fragments are preserved; the app applies filler removal and custom replacements separately. The transcript and vocabulary are treated as text, not instructions.</string>
+    <string name="polishing_prompt_hint">The editor preserves your meaning, language, and tone while lightly fixing grammar and syntax. It removes clear false starts, immediate repetitions, and self-corrections (keeping the final intended wording), and formats spoken numbers and unambiguous times as digits. It avoids guessing or rewriting for style. Your custom vocabulary is sent with the transcript and used only as a spelling/recognition hint—not as a reason to insert a term. Both are treated as text, not instructions; your configured local filler-removal and replacement rules still run afterward.</string>
     
     <string name="model_section_title">Speech Recognition Model</string>
     <string name="model_parakeet_v2">Parakeet TDT 0.6B v2 (English)</string>

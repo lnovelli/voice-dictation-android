@@ -1,7 +1,7 @@
 {
-  "version_code": 19,
-  "version_name": "1.1.8",
-  "download_url": "https://github.com/lnovelli/voice-dictation-android/releases/download/v1.1.8/voice-dictation.apk",
-  "sha256": "4f094ca89bec140a97ca1902a3c7331cefb9dcac99591a56905c1154ef8188b0",
-  "release_notes": "v1.1.8: Reports recording only after microphone startup; drains available buffered PCM on Stop with a bounded stop fallback. Incomplete AI-polishing responses now preserve the local transcript. History adds a reprocess action that replaces the transcript only, keeps the original audio/history entry, disables experimental acoustic bias, and uses lossless non-overlapping low-energy windows for long retries. ARM64-only; updates remain manual."
+  "version_code": 20,
+  "version_name": "1.1.9",
+  "download_url": "https://github.com/lnovelli/voice-dictation-android/releases/download/v1.1.9/voice-dictation.apk",
+  "sha256": "5560110f3c165abd799a63f022553539b55992fd490e51d7d505fb3a2c272f46",
+  "release_notes": "v1.1.9: Improves optional AI transcript polishing with careful handling of spoken self-corrections, false starts, and repetitions; light grammar and syntax cleanup; and digit formatting for spoken numbers and unambiguous times. Custom vocabulary is included as a structured hint and cannot instruct the model to insert terms. AI polishing remains off by default; audio is never sent. ARM64-only; updates remain manual."
 }
