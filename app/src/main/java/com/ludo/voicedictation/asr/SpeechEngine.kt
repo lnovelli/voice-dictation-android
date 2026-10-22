@@ -20,6 +20,7 @@ import com.ludo.voicedictation.data.HistoryAudioStore
 import com.ludo.voicedictation.model.ModelInfo
 import com.ludo.voicedictation.model.ModelManager
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
@@ -31,6 +32,8 @@ class SpeechEngine private constructor(private val context: Context) {
         // 120 seconds of mono, signed 16-bit little-endian raw PCM. No WAV header.
         private const val MAX_FILE_BYTES = 3_840_000L
         private const val CAPTURE_READ_SAMPLES = 1024
+        // Batch PCM into half-second queue items; size the queue for the full bounded capture.
+        private const val STREAM_CHUNK_SAMPLES = SAMPLE_RATE / 2
         private const val STOP_DRAIN_TIMEOUT_MS = 200L
         private const val MAX_LIVE_SAMPLES = SAMPLE_RATE * 120
         private val HOTWORD_PATTERN = Regex("""^[\p{L}\p{M}\p{N}]+(?:[- '’][\p{L}\p{M}\p{N}]+)*$""")
@@ -52,6 +55,7 @@ class SpeechEngine private constructor(private val context: Context) {
         val owner: Any? = null,
         val listener: ExternalListener? = null,
         val audioFile: ParcelFileDescriptor? = null,
+        var modelId: String = AppPreferences.MODEL_PARAKEET_V2,
         val historyAudioInputFileName: String? = null,
         val historyReprocessOwner: Any? = null,
         val historyPolishingConfiguration: TranscriptPolishingConfiguration? = null
@@ -89,6 +93,7 @@ class SpeechEngine private constructor(private val context: Context) {
     private val nativeLock = Mutex()
     private val recorderLock = Any()
     private var recognizer: OfflineRecognizer? = null
+    private var onlineRecognizer: OnlineRecognizer? = null
     private var loadedConfigKey: DecoderConfigKey? = null
     private var spellingHints = RecognitionPolicy.SpellingHints(emptySet())
     private var transcriptFilter = TranscriptFilter(emptyList())
@@ -163,12 +168,20 @@ class SpeechEngine private constructor(private val context: Context) {
             if (current.listener == null) onError?.invoke("Grant microphone permission in Settings before dictating.")
             return false
         }
+        current.modelId = ModelInfo.getModelById(prefs.selectedModelId).id
         session = current
         // Keep the control active during mic startup, but expose a distinct not-yet-recording state.
         setState(!hasCompletedAudio, true, if (hasCompletedAudio) "loading" else "starting")
         val job = scope.launch {
             try {
-                val samples = withContext(Dispatchers.IO) {
+                val model = ModelInfo.getModelById(current.modelId)
+                val liveStreaming = model.streaming && current.audioFile == null &&
+                    current.historyAudioInputFileName == null
+                val samples = if (liveStreaming) {
+                    val capture = captureAndTranscribeStreaming(current)
+                    current.text = capture.text
+                    capture.samples
+                } else withContext(Dispatchers.IO) {
                     when {
                         current.audioFile != null -> readAudioFile(current)
                         current.historyAudioInputFileName != null ->
@@ -177,16 +190,25 @@ class SpeechEngine private constructor(private val context: Context) {
                     }
                 }
                 if (!current.cancelled && prefs.serviceEnabled && samples.isNotEmpty()) {
-                    setState(false, true, "loading")
-                    current.text = withContext(Dispatchers.Default) {
-                        nativeLock.withLock {
-                            if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
-                            initializeEngine(forceUnbiased = current.historyAudioInputFileName != null)
-                            if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
-                            withContext(Dispatchers.Main) {
-                                if (!current.cancelled) setState(false, true, "processing")
+                    if (current.text == null) {
+                        setState(false, true, "loading")
+                        current.text = withContext(Dispatchers.Default) {
+                            nativeLock.withLock {
+                                if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
+                                initializeEngine(
+                                    forceUnbiased = current.historyAudioInputFileName != null,
+                                    modelId = current.modelId
+                                )
+                                if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
+                                withContext(Dispatchers.Main) {
+                                    if (!current.cancelled) setState(false, true, "processing")
+                                }
+                                decodeRecording(
+                                    samples,
+                                    current,
+                                    reprocessInWindows = current.historyAudioInputFileName != null
+                                )
                             }
-                            decodeRecording(samples, current, reprocessInWindows = current.historyAudioInputFileName != null)
                         }
                     }
                     val originalText = current.text.orEmpty()
@@ -323,19 +345,17 @@ class SpeechEngine private constructor(private val context: Context) {
     }
 
     // All native creation, decoding and destruction run under nativeLock, never on the UI thread.
-    private fun initializeEngine(forceUnbiased: Boolean = false) {
-        val model = ModelInfo.getModelById(prefs.selectedModelId)
-        // Snapshot vocabulary and post-processing options only after explicit Stop/completed-file capture.
+    private fun initializeEngine(
+        forceUnbiased: Boolean = false,
+        modelId: String = prefs.selectedModelId,
+        deferTranscriptTransforms: Boolean = false
+    ) {
+        val model = ModelInfo.getModelById(modelId)
+        if (!deferTranscriptTransforms) snapshotTranscriptTransforms()
+        // Decoder context is independent of final-text transforms.
         val vocabulary = prefs.getVocabulary().toSet()
-        spellingHints = RecognitionPolicy.SpellingHints(
-            if (prefs.vocabularySpellingEnabled) vocabulary else emptySet()
-        )
-        transcriptFilter = TranscriptFilter(
-            if (prefs.transcriptRemovalEnabled) prefs.transcriptRemovalWords else emptyList()
-        )
-        stringReplacer = CustomStringReplacer(prefs.getStringReplacementRules())
 
-        val safeHotwords = if (!forceUnbiased && prefs.acousticVocabularyEnabled) {
+        val safeHotwords = if (!forceUnbiased && !model.streaming && prefs.acousticVocabularyEnabled) {
             vocabulary.asSequence()
                 .map { it.trim().replace(Regex("""\s+"""), " ") }
                 .filter { it.length in 1..80 && HOTWORD_PATTERN.matches(it) }
@@ -351,12 +371,34 @@ class SpeechEngine private constructor(private val context: Context) {
             hotwordsScore = if (useAcousticBias) prefs.acousticHotwordsScore else 0f,
             hotwords = safeHotwords
         )
-        if (recognizer != null && loadedConfigKey == configKey) return
+        val recognizerLoaded = if (model.streaming) onlineRecognizer != null else recognizer != null
+        if (recognizerLoaded && loadedConfigKey == configKey) return
 
         releaseNative()
         check(modelManager.isModelDownloaded(model)) { "Download the selected model in Settings." }
         val dir = modelManager.getModelDir(model)
         try {
+            if (model.streaming) {
+                onlineRecognizer = OnlineRecognizer(null, OnlineRecognizerConfig(
+                    featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 128),
+                    modelConfig = OnlineModelConfig(
+                        transducer = OnlineTransducerModelConfig(
+                            encoder = File(dir, model.encoderFileName).absolutePath,
+                            decoder = File(dir, model.decoderFileName).absolutePath,
+                            joiner = File(dir, model.joinerFileName).absolutePath
+                        ),
+                        tokens = File(dir, model.tokensFileName).absolutePath,
+                        numThreads = 2,
+                        provider = "cpu"
+                    ),
+                    // Keep one transcript across the recording; explicit Stop performs the flush.
+                    enableEndpoint = false,
+                    decodingMethod = "greedy_search"
+                ))
+                loadedConfigKey = configKey
+                Log.i(TAG, "Loaded ${model.id}; buffered Parakeet Unified streaming greedy decoder")
+                return
+            }
             val bpeVocab = if (useAcousticBias) installBpeVocab(model) else null
             val hotwordsFile = if (useAcousticBias) writeHotwordsFile(safeHotwords) else ""
             recognizer = OfflineRecognizer(null, OfflineRecognizerConfig(
@@ -392,6 +434,18 @@ class SpeechEngine private constructor(private val context: Context) {
         }
     }
 
+    /** Snapshot post-recognition rules when finalization starts, not while streaming capture is active. */
+    private fun snapshotTranscriptTransforms() {
+        val vocabulary = prefs.getVocabulary().toSet()
+        spellingHints = RecognitionPolicy.SpellingHints(
+            if (prefs.vocabularySpellingEnabled) vocabulary else emptySet()
+        )
+        transcriptFilter = TranscriptFilter(
+            if (prefs.transcriptRemovalEnabled) prefs.transcriptRemovalWords else emptyList()
+        )
+        stringReplacer = CustomStringReplacer(prefs.getStringReplacementRules())
+    }
+
     /** Materialize the selected model's matching BPE vocabulary as a private file for sherpa-onnx. */
     private fun installBpeVocab(model: ModelInfo): File {
         val assetName = if (model.id == AppPreferences.MODEL_PARAKEET_V3) {
@@ -423,14 +477,98 @@ class SpeechEngine private constructor(private val context: Context) {
         return file.absolutePath
     }
 
-    /** PCM only. No ASR/VAD model, waveform queue, padding or inference during capture. */
+    private data class StreamingCaptureResult(val samples: FloatArray, val text: String)
+
+    /** Run only for the selected streaming model; keep raw PCM capture separate from ASR work. */
+    private suspend fun captureAndTranscribeStreaming(current: Session): StreamingCaptureResult =
+        withContext(Dispatchers.Default) {
+            nativeLock.withLock {
+                if (current.cancelled || !prefs.serviceEnabled) {
+                    return@withLock StreamingCaptureResult(floatArrayOf(), "")
+                }
+                initializeEngine(modelId = current.modelId, deferTranscriptTransforms = true)
+                val engine = checkNotNull(onlineRecognizer)
+                val stream = engine.createStream()
+                try {
+                    coroutineScope {
+                        // Capacity covers the entire bounded recording if inference temporarily
+                        // falls behind. This keeps AudioRecord independent from JNI latency.
+                        val chunks = Channel<ShortArray>(
+                            capacity = MAX_LIVE_SAMPLES / STREAM_CHUNK_SAMPLES + 2
+                        )
+                        var workerFailure: Exception? = null
+                        var finalText = ""
+                        val worker = launch(Dispatchers.Default) {
+                            var receivedAudio = false
+                            try {
+                                for (chunk in chunks) {
+                                    if (current.cancelled || !prefs.serviceEnabled) break
+                                    val floatChunk = FloatArray(chunk.size) { chunk[it] / 32768f }
+                                    stream.acceptWaveform(floatChunk, SAMPLE_RATE)
+                                    receivedAudio = true
+                                    while (engine.isReady(stream)) {
+                                        if (current.cancelled || !prefs.serviceEnabled) break
+                                        engine.decode(stream)
+                                    }
+                                }
+                                if (receivedAudio && !current.cancelled && prefs.serviceEnabled) {
+                                    stream.inputFinished()
+                                    while (engine.isReady(stream)) {
+                                        if (current.cancelled || !prefs.serviceEnabled) break
+                                        engine.decode(stream)
+                                    }
+                                    if (!current.cancelled && prefs.serviceEnabled) {
+                                        finalText = engine.getResult(stream).text.trim()
+                                    }
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                // Do not cancel microphone capture on a recoverable native error.
+                                // The bounded queue can retain the remaining raw input until Stop.
+                                workerFailure = e
+                            }
+                        }
+
+                        val samples = try {
+                            withContext(Dispatchers.IO) {
+                                captureRecording(current) { chunk ->
+                                    if (!current.cancelled) chunks.send(chunk)
+                                }
+                            }
+                        } finally {
+                            chunks.close()
+                        }
+                        worker.join()
+                        workerFailure?.let { throw it }
+                        StreamingCaptureResult(samples, finalText)
+                    }
+                } finally {
+                    stream.release()
+                }
+            }
+        }
+
+    /** Capture every PCM sample; the optional bounded callback is used only by streaming ASR. */
     @SuppressLint("MissingPermission")
-    private suspend fun captureRecording(current: Session): FloatArray {
+    private suspend fun captureRecording(
+        current: Session,
+        onStreamingChunk: (suspend (ShortArray) -> Unit)? = null
+    ): FloatArray {
         if (current.stopped || current.cancelled) return floatArrayOf()
         val minBytes = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         check(minBytes > 0) { "Microphone format is unsupported ($minBytes)." }
         val recording = ShortArray(MAX_LIVE_SAMPLES)
         var count = 0
+        var streamChunk = if (onStreamingChunk == null) null else ShortArray(STREAM_CHUNK_SAMPLES)
+        var streamChunkCount = 0
+        suspend fun flushStreamingChunk() {
+            val pending = streamChunk ?: return
+            if (streamChunkCount > 0 && !current.cancelled) {
+                onStreamingChunk?.invoke(pending.copyOf(streamChunkCount))
+                streamChunkCount = 0
+            }
+        }
         val audio = AudioRecord(MediaRecorder.AudioSource.MIC, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT, maxOf(minBytes * 4, SAMPLE_RATE * 2))
         try {
@@ -460,7 +598,24 @@ class SpeechEngine private constructor(private val context: Context) {
                     audio.read(recording, count, requested, AudioRecord.READ_BLOCKING)
                 }
                 if (read > 0) {
+                    val readStart = count
                     count += read
+                    val pending = streamChunk
+                    if (pending != null && !current.cancelled) {
+                        var sourceOffset = readStart
+                        while (sourceOffset < count) {
+                            val target = streamChunk ?: break
+                            val copied = minOf(target.size - streamChunkCount, count - sourceOffset)
+                            System.arraycopy(recording, sourceOffset, target, streamChunkCount, copied)
+                            sourceOffset += copied
+                            streamChunkCount += copied
+                            if (streamChunkCount == target.size) {
+                                onStreamingChunk?.invoke(target)
+                                streamChunk = ShortArray(STREAM_CHUNK_SAMPLES)
+                                streamChunkCount = 0
+                            }
+                        }
+                    }
                     continue
                 }
                 if (current.cancelled) break
@@ -481,6 +636,7 @@ class SpeechEngine private constructor(private val context: Context) {
             current.stopDrainTimeout = null
         }
         if (!current.stopped && !current.cancelled && count == MAX_LIVE_SAMPLES) {
+            flushStreamingChunk()
             withContext(Dispatchers.Main) {
                 if (!current.stopped && !current.cancelled && session === current) {
                     // Keep Stop/Cancel controls active. A resource cap is NOT consent to decode.
@@ -492,6 +648,7 @@ class SpeechEngine private constructor(private val context: Context) {
         }
         if (current.cancelled || !prefs.serviceEnabled) return floatArrayOf()
         check(current.stopped) { "Recording must be explicitly stopped before transcription." }
+        flushStreamingChunk()
         return FloatArray(count) { recording[it] / 32768f }
     }
 
@@ -528,12 +685,41 @@ class SpeechEngine private constructor(private val context: Context) {
 
     private fun decode(samples: FloatArray, current: Session): String {
         require(samples.isNotEmpty() && samples.size <= MAX_LIVE_SAMPLES) { "Recording duration exceeded." }
+        if (ModelInfo.getModelById(current.modelId).streaming) {
+            return decodeOnline(samples, current)
+        }
         val engine = checkNotNull(recognizer)
         val stream = engine.createStream()
         return try {
             stream.acceptWaveform(samples, SAMPLE_RATE)
             if (current.cancelled || !prefs.serviceEnabled) return ""
             engine.decode(stream)
+            engine.getResult(stream).text.trim()
+        } finally { stream.release() }
+    }
+
+    /** Feed completed audio through the online recognizer for watch-file and History paths. */
+    private fun decodeOnline(samples: FloatArray, current: Session): String {
+        val engine = checkNotNull(onlineRecognizer)
+        val stream = engine.createStream()
+        return try {
+            var offset = 0
+            while (offset < samples.size) {
+                if (current.cancelled || !prefs.serviceEnabled) return ""
+                val end = minOf(offset + STREAM_CHUNK_SAMPLES, samples.size)
+                stream.acceptWaveform(samples.copyOfRange(offset, end), SAMPLE_RATE)
+                while (engine.isReady(stream)) {
+                    if (current.cancelled || !prefs.serviceEnabled) return ""
+                    engine.decode(stream)
+                }
+                offset = end
+            }
+            if (current.cancelled || !prefs.serviceEnabled) return ""
+            stream.inputFinished()
+            while (engine.isReady(stream)) {
+                if (current.cancelled || !prefs.serviceEnabled) return ""
+                engine.decode(stream)
+            }
             engine.getResult(stream).text.trim()
         } finally { stream.release() }
     }
@@ -559,6 +745,10 @@ class SpeechEngine private constructor(private val context: Context) {
         if (current.cancelled) current.closeAudioFile()
         // Completed files already exist: STOP is a no-op; only CANCEL discards their result.
         if (current.audioFile != null || current.historyAudioInputFileName != null) return
+        if (!current.cancelled && ModelInfo.getModelById(current.modelId).streaming) {
+            // Snapshot final-text rules at the user's Stop action, while online decoding drains.
+            snapshotTranscriptTransforms()
+        }
         current.stopped = true
         current.stopRequested.complete(Unit)
         // On ordinary Stop, let the capture thread consume the in-flight read and
@@ -614,9 +804,15 @@ class SpeechEngine private constructor(private val context: Context) {
         // Detach before destruction: even a native release exception cannot leave a
         // stale object available for a later session or a second release.
         val oldRecognizer = recognizer
+        val oldOnlineRecognizer = onlineRecognizer
         recognizer = null
+        onlineRecognizer = null
         loadedConfigKey = null
-        oldRecognizer?.release()
+        try {
+            oldRecognizer?.release()
+        } finally {
+            oldOnlineRecognizer?.release()
+        }
     }
 
     private fun setState(recording: Boolean, processing: Boolean, state: String = if (recording) "recording" else "processing") {

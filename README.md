@@ -1,34 +1,36 @@
 # Voice Dictation for Android
 
-An on-device, privacy-first voice dictation application for Android powered by NVIDIA NeMo Parakeet TDT 0.6B models and sherpa-onnx.
+An on-device, privacy-first voice dictation application for Android powered by NVIDIA NeMo Parakeet TDT and Parakeet Unified models through sherpa-onnx.
 
 Voice Dictation brings seamless system-wide voice input to any text field across Android without sending audio data to third-party cloud servers.
 
 ---
 
-## Current release: v1.2.0 (build 21; ARM64-only)
+## Current release: v1.2.1 (build 22; ARM64-only)
 
-The Polish tab now lets you edit and save the transcript-polishing system prompt locally, or restore the built-in prompt. Prompt edits take effect for live polishing and History reprocessing without another app update. The prompt, final transcript and custom vocabulary are sent as text to the configured endpoint when polishing is enabled; audio is never sent. Polishing remains off by default.
+Adds Parakeet Unified 0.6B as an optional English streaming model. When selected, recognition runs on incoming audio chunks while recording; no transcript preview is displayed. Stop flushes the online recognizer and returns its final transcript. TDT v2/v3 retain their existing capture-only/full-recording decode path. All audio remains on-device, and updates remain manual. See [Parakeet Unified streaming](docs/parakeet-unified-streaming-1.2.1.md).
 
 ## Features
 
 - **Local & Private Inference:** Runs locally on your Android device using `sherpa-onnx` and ONNX Runtime Mobile with ARM NEON CPU acceleration.
 - **State-of-the-Art ASR Models:**
-  - **Parakeet TDT 0.6B v2 (English):** High accuracy, trained on 36,000 hours of speech, with native punctuation and capitalization.
-  - **Parakeet TDT 0.6B v3 (Multilingual):** Supports 25 European languages with punctuation and capitalization.
-- **One-Click Model Download:** In-app model downloader with real-time progress, background transfer, and automatic local archive extraction.
+  - **Parakeet TDT 0.6B v2 (English):** High accuracy, trained on 36,000 hours of speech, with native punctuation and capitalization. Uses one full-recording decode after Stop.
+  - **Parakeet TDT 0.6B v3 (Multilingual):** Supports 25 European languages with punctuation and capitalization. Uses one full-recording decode after Stop.
+  - **Parakeet Unified 0.6B (English, Streaming):** sherpa-onnx online RNNT recognition processes audio during recording to reduce finalization work. The app does not display partial transcripts; the final result is returned on Stop. English only; the 560 ms buffered model preset is not a device-latency guarantee.
+- **One-Click Model Download:** In-app model downloader with real-time progress, background transfer, and automatic local archive extraction for all three models.
 - **Smart Floating Overlay Button:**
   - Automatically appears when any editable text input field receives focus across the operating system.
   - Draggable partly beyond any screen edge, with independent saved positions for portrait and landscape; an unset position starts vertically centered at the right edge.
   - Adjustable floating icon size (50–150%) and opacity, applied immediately from Settings.
   - Hides automatically when focus moves away from text fields.
-- **Record, Then Transcribe (1.0.8 / build 9):**
-  - Tap microphone to record exact bounded PCM only. No streaming, previews, VAD or native model initialization during recording.
-  - Tap Stop to load the model and run one final decode of the complete recording. Unbiased greedy decoding is used by default; optional acoustic vocabulary switches to modified beam search. No 20-second partitioning, per-window concatenation, synthetic padding or partial-result fallback. Final-only exact-zero endpoint trimming preserves every nonzero sample, internal pauses and 500 ms of original margins.
-  - Hold the recording button to discard without decoding. Release after a hold cannot restart; dragging cancels the hold timer, and cancelled touch gestures do not stop or discard audio. Accessible click/long-click and haptic cues are provided.
-  - At 120 seconds, microphone capture closes and bounded PCM waits for your explicit Stop or Cancel. A toast explains the limit; Stop stays available. Reaching the cap never initiates transcription.
+- **Model-specific capture and recognition (1.2.1):**
+  - **TDT v2/v3:** Capture exact bounded PCM only. No streaming recognition, previews, VAD or native inference runs during capture. Explicit Stop loads/reuses the model and runs one unbiased full-recording decode by default; the optional acoustic vocabulary setting applies only to TDT.
+  - **Parakeet Unified:** The online recognizer consumes bounded audio batches while AudioRecord continues capturing. Partial text stays internal and is never shown or inserted. Explicit Stop drains queued audio, flushes the online stream and returns that final transcript without a second full-recording pass. A bounded queue can retain the whole 120-second input if inference falls behind; in that case Stop still waits for the remaining backlog. Device throughput and latency need physical-phone validation.
+  - All live modes retain the original PCM independently of recognition for the existing final transcript/history workflow. The Unified model is English-only; acoustic hotword bias is disabled for it, while final spelling/replacement/filler rules and optional text-only polishing remain unchanged.
+  - Hold the recording button during capture or pending final processing to discard and suppress the result. An already-running native decode cannot be interrupted, but its output is discarded. Release after a hold cannot restart; dragging cancels the hold timer, and cancelled touch gestures do not stop or discard audio. Accessible click/long-click and haptic cues are provided.
+  - At 120 seconds, microphone capture closes and bounded PCM waits for your explicit Stop or Cancel. A toast explains the limit; Stop stays available. Reaching the cap never initiates finalization.
   - Only the final transcript is inserted into the active focused field (with clipboard fallback); external IPC transcripts are never pasted or copied by the overlay.
-  - Full-context inference can be slow and memory intensive. Accuracy is **not guaranteed**: with unbiased greedy decoding, native v3 probes recognized short English/French clips but returned empty text when the same speech preceded silence to 120 seconds. With the hotword-free greedy configuration, silence returned no repeated vocabulary tokens. Review important text; see [verification and limitations](docs/record-then-transcribe-1.0.8.md).
+  - TDT full-context inference can be slow and memory intensive. Accuracy is **not guaranteed**: with unbiased greedy decoding, native v3 probes recognized short English/French clips but returned empty text when the same speech preceded silence to 120 seconds. With the hotword-free greedy configuration, silence returned no repeated vocabulary tokens. Review important text; see [verification and limitations](docs/record-then-transcribe-1.0.8.md).
 - **Custom Vocabulary:**
   - Add technical terms, names or acronyms in the Vocabulary tab. The separate spelling switch can only recase or join/split spaces when the recognized letters already match.
   - Optional experimental acoustic hotword bias is also in the Vocabulary tab. It uses modified beam search with model-matched BPE vocab files; initial settings are four active paths, score 1.0 and fixed blank penalty 0.0. Its toggle is **off by default**; active paths and score have sliders.

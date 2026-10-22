@@ -29,6 +29,8 @@
     <string name="model_parakeet_v2_desc">Fast, highly accurate English model with punctuation and capitalization (~600MB)</string>
     <string name="model_parakeet_v3">Parakeet TDT 0.6B v3 (Multilingual)</string>
     <string name="model_parakeet_v3_desc">Supports 25 European languages (~600MB). Long internal pauses or quiet/noisy padding can lose speech; use shorter recordings.</string>
+    <string name="model_parakeet_unified">Parakeet Unified 0.6B (English, Streaming)</string>
+    <string name="model_parakeet_unified_desc">Processes audio during recording for a quicker final result. English only; no live transcript preview (~480MB download).</string>
     
     <string name="status_not_downloaded">Not Downloaded</string>
     <string name="status_downloading">Downloading…</string>
@@ -61,6 +63,7 @@
     <string name="acoustic_vocabulary_title">Acoustic Custom-Word Decoding (Experimental)</string>
     <string name="acoustic_vocabulary_toggle">Enable acoustic hotword bias</string>
     <string name="acoustic_vocabulary_warning">Off by default to preserve unbiased recognition. Modified beam search can repeat terms or change/omit unrelated speech; previous native probes reproduced this. The four-path, score-1 setup is exposed for testing, not accuracy-guaranteed. Blank penalty is fixed at 0.0. Only plain text terms (letters, digits, spaces, apostrophes or hyphens) are used for acoustic bias; unsupported saved entries remain available as spelling hints.</string>
+    <string name="acoustic_vocabulary_streaming_notice">Acoustic hotword decoding is not applied to Parakeet Unified streaming. Saved settings remain available when you switch back to a TDT model; custom spelling still applies to the final transcript.</string>
     <string name="max_active_paths_label">Active search paths</string>
     <string name="max_active_paths_value">Active search paths: %1$d (2–8)</string>
     <string name="hotwords_score_label">Hotword score</string>

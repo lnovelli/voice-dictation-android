@@ -9,7 +9,8 @@ data class ModelInfo(
     val encoderFileName: String = "encoder.int8.onnx",
     val decoderFileName: String = "decoder.int8.onnx",
     val joinerFileName: String = "joiner.int8.onnx",
-    val tokensFileName: String = "tokens.txt"
+    val tokensFileName: String = "tokens.txt",
+    val streaming: Boolean = false
 ) {
     companion object {
         val PARAKEET_V2 = ModelInfo(
@@ -28,8 +29,21 @@ data class ModelInfo(
             dirName = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
         )
 
+        val PARAKEET_UNIFIED_STREAMING = ModelInfo(
+            id = "parakeet_unified_streaming",
+            displayName = "Parakeet Unified 0.6B (English, Streaming)",
+            description = "English-only streaming recognition with punctuation and capitalization.",
+            archiveUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-streaming-560ms.tar.bz2",
+            dirName = "sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-streaming-560ms",
+            streaming = true
+        )
+
         fun getModelById(id: String): ModelInfo {
-            return if (id == PARAKEET_V3.id) PARAKEET_V3 else PARAKEET_V2
+            return when (id) {
+                PARAKEET_V3.id -> PARAKEET_V3
+                PARAKEET_UNIFIED_STREAMING.id -> PARAKEET_UNIFIED_STREAMING
+                else -> PARAKEET_V2
+            }
         }
     }
 }

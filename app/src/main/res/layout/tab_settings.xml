@@ -81,6 +81,23 @@
                     android:textSize="12sp"
                     android:layout_marginStart="32dp"
                     android:layout_marginBottom="12dp" />
+
+                <RadioButton
+                    android:id="@+id/rbModelUnified"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/model_parakeet_unified"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/model_parakeet_unified_desc"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp"
+                    android:layout_marginStart="32dp"
+                    android:layout_marginBottom="12dp" />
             </RadioGroup>
 
             <!-- Model Status -->

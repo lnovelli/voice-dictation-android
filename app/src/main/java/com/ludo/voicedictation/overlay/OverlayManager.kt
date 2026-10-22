@@ -313,11 +313,13 @@ class OverlayManager(private val context: Context) {
             View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         root.setOnClickListener { onOverlayClicked() }
         root.setOnLongClickListener {
-            if (speechEngine.isLocalSessionActive && speechEngine.isRecording && !speechEngine.isExternalSessionActive) {
+            if (speechEngine.isLocalSessionActive &&
+                (speechEngine.isRecording || speechEngine.isProcessing) &&
+                !speechEngine.isExternalSessionActive) {
                 speechEngine.cancelRecording()
                 root.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                root.announceForAccessibility("Recording discarded")
-                Toast.makeText(context, "Recording discarded", Toast.LENGTH_SHORT).show()
+                root.announceForAccessibility("Dictation discarded")
+                Toast.makeText(context, "Dictation discarded", Toast.LENGTH_SHORT).show()
                 true
             } else false
         }
@@ -332,7 +334,9 @@ class OverlayManager(private val context: Context) {
                     isDragging = false
                     touchActive = true
                     consumeRelease = false
-                    if (speechEngine.isLocalSessionActive && speechEngine.isRecording && !speechEngine.isExternalSessionActive) {
+                    if (speechEngine.isLocalSessionActive &&
+                        (speechEngine.isRecording || speechEngine.isProcessing) &&
+                        !speechEngine.isExternalSessionActive) {
                         root.postDelayed(hold, ViewConfiguration.getLongPressTimeout().toLong())
                     }
                     true

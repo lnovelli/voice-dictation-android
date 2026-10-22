@@ -88,18 +88,18 @@ class SettingsFragment : Fragment() {
     }
 
     private fun setupModelSelection() {
-        if (prefs.selectedModelId == AppPreferences.MODEL_PARAKEET_V3) {
-            binding.rbModelV3.isChecked = true
-        } else {
-            binding.rbModelV2.isChecked = true
+        when (prefs.selectedModelId) {
+            AppPreferences.MODEL_PARAKEET_V3 -> binding.rbModelV3.isChecked = true
+            AppPreferences.MODEL_PARAKEET_UNIFIED_STREAMING -> binding.rbModelUnified.isChecked = true
+            else -> binding.rbModelV2.isChecked = true
         }
 
         binding.rgModelSelection.setOnCheckedChangeListener { _, checkedId ->
             if (isDownloading) return@setOnCheckedChangeListener
-            val selected = if (checkedId == R.id.rbModelV3) {
-                AppPreferences.MODEL_PARAKEET_V3
-            } else {
-                AppPreferences.MODEL_PARAKEET_V2
+            val selected = when (checkedId) {
+                R.id.rbModelV3 -> AppPreferences.MODEL_PARAKEET_V3
+                R.id.rbModelUnified -> AppPreferences.MODEL_PARAKEET_UNIFIED_STREAMING
+                else -> AppPreferences.MODEL_PARAKEET_V2
             }
             prefs.selectedModelId = selected
             updateModelStatus()
@@ -155,6 +155,7 @@ class SettingsFragment : Fragment() {
         binding.rgModelSelection.isEnabled = false
         binding.rbModelV2.isEnabled = false
         binding.rbModelV3.isEnabled = false
+        binding.rbModelUnified.isEnabled = false
         binding.layoutDownloadProgress.visibility = View.VISIBLE
         binding.progressBarModel.progress = 0
         binding.tvProgressPercent.text = "Starting..."
@@ -175,6 +176,7 @@ class SettingsFragment : Fragment() {
                 binding.rgModelSelection.isEnabled = true
                 binding.rbModelV2.isEnabled = true
                 binding.rbModelV3.isEnabled = true
+                binding.rbModelUnified.isEnabled = true
 
                 if (result.isSuccess) {
                     Toast.makeText(requireContext(), "${model.displayName} downloaded successfully!", Toast.LENGTH_LONG).show()

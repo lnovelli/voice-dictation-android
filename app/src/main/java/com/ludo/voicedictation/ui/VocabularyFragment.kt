@@ -18,6 +18,7 @@ import com.ludo.voicedictation.data.AppPreferences
 import com.ludo.voicedictation.data.StringReplacementRule
 import com.ludo.voicedictation.data.StringReplacementRules
 import com.ludo.voicedictation.databinding.TabVocabularyBinding
+import com.ludo.voicedictation.model.ModelInfo
 import java.util.Locale
 
 class VocabularyFragment : Fragment() {
@@ -53,6 +54,11 @@ class VocabularyFragment : Fragment() {
         refreshList()
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (_binding != null && ::prefs.isInitialized) updateAcousticControlsForModel()
+    }
+
     private fun setupAcousticControls() {
         binding.switchAcousticVocabulary.isChecked = prefs.acousticVocabularyEnabled
         binding.sliderMaxActivePaths.value = prefs.acousticMaxActivePaths.toFloat()
@@ -68,17 +74,11 @@ class VocabularyFragment : Fragment() {
             )
 
         }
-        fun updateSliderEnabled(enabled: Boolean) {
-            binding.sliderMaxActivePaths.isEnabled = enabled
-            binding.sliderHotwordsScore.isEnabled = enabled
-
-        }
-
         updateLabels()
-        updateSliderEnabled(prefs.acousticVocabularyEnabled)
+        updateAcousticControlsForModel()
         binding.switchAcousticVocabulary.setOnCheckedChangeListener { _, enabled ->
             prefs.acousticVocabularyEnabled = enabled
-            updateSliderEnabled(enabled)
+            updateAcousticControlsForModel()
         }
         binding.sliderMaxActivePaths.addOnChangeListener { _, value, fromUser ->
             if (fromUser) prefs.acousticMaxActivePaths = value.toInt()
@@ -89,6 +89,18 @@ class VocabularyFragment : Fragment() {
             updateLabels()
         }
 
+    }
+
+    private fun updateAcousticControlsForModel() {
+        val streaming = ModelInfo.getModelById(prefs.selectedModelId).streaming
+        binding.switchAcousticVocabulary.isEnabled = !streaming
+        val enabled = prefs.acousticVocabularyEnabled && !streaming
+        binding.sliderMaxActivePaths.isEnabled = enabled
+        binding.sliderHotwordsScore.isEnabled = enabled
+        binding.tvAcousticVocabularyWarning.text = getString(
+            if (streaming) R.string.acoustic_vocabulary_streaming_notice
+            else R.string.acoustic_vocabulary_warning
+        )
     }
 
     private fun setupRecyclerView() {

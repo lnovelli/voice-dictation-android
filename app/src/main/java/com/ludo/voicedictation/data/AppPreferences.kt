@@ -51,6 +51,7 @@ class AppPreferences(context: Context) {
 
         const val MODEL_PARAKEET_V2 = "parakeet_v2"
         const val MODEL_PARAKEET_V3 = "parakeet_v3"
+        const val MODEL_PARAKEET_UNIFIED_STREAMING = "parakeet_unified_streaming"
     }
 
     var transcriptPolishingEnabled: Boolean
