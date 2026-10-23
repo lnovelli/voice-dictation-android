@@ -1,7 +1,7 @@
 {
-  "version_code": 21,
-  "version_name": "1.2.0",
-  "download_url": "https://github.com/lnovelli/voice-dictation-android/releases/download/v1.2.0/voice-dictation.apk",
-  "sha256": "9f6e64212453b05abe9cbf7c26b6d51e5116e588af54f023a4f35548da0b9d25",
-  "release_notes": "v1.2.0: Adds an editable polishing system prompt in the Polish tab. The prompt is saved locally, applied to live polishing and History reprocessing, and can be reset to the built-in prompt; edits no longer require another app build. The prompt, transcript, and custom vocabulary are sent as text when polishing is enabled; audio is never sent. Connection tests use synthetic text. ARM64-only; updates remain manual."
+  "version_code": 22,
+  "version_name": "1.2.1",
+  "download_url": "https://github.com/lnovelli/voice-dictation-android/releases/download/v1.2.1/voice-dictation.apk",
+  "sha256": "6d137107c8e9c3faf6242fd21cf8cf9635d53434aca9f00f916e296fdc644246",
+  "release_notes": "v1.2.1: Adds Parakeet Unified 0.6B as an optional English streaming model. When selected, ASR processes audio during recording without displaying partial transcripts; Stop flushes one final online result. Parakeet TDT v2/v3 remain full-recording, final-only decoders. Includes model selection, assisted download, and model-specific acoustic-vocabulary controls. ARM64-only; updates remain manual."
 }
