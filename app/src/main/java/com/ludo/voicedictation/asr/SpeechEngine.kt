@@ -34,8 +34,11 @@ class SpeechEngine private constructor(private val context: Context) {
         private const val CAPTURE_READ_SAMPLES = 1024
         // Batch PCM into half-second queue items; size the queue for the full bounded capture.
         private const val STREAM_CHUNK_SAMPLES = SAMPLE_RATE / 2
-        private const val STOP_DRAIN_TIMEOUT_MS = 200L
         private const val MAX_LIVE_SAMPLES = SAMPLE_RATE * 120
+        private const val VAD_FRAME_SAMPLES = 512
+        private const val RAW_PCM_QUEUE_CAPACITY = MAX_LIVE_SAMPLES / CAPTURE_READ_SAMPLES + 2
+        private const val TDT_CHUNK_QUEUE_CAPACITY = MAX_LIVE_SAMPLES / VAD_FRAME_SAMPLES + 2
+        private const val STOP_DRAIN_TIMEOUT_MS = 200L
         private val HOTWORD_PATTERN = Regex("""^[\p{L}\p{M}\p{N}]+(?:[- '’][\p{L}\p{M}\p{N}]+)*$""")
         @Volatile private var instance: SpeechEngine? = null
         fun getInstance(context: Context): SpeechEngine = instance ?: synchronized(this) {
@@ -66,6 +69,10 @@ class SpeechEngine private constructor(private val context: Context) {
         var text: String? = null
         var error: String? = null
         var historyAudioFileName: String? = null
+        var finalTextSettingsCaptured = false
+        var finalPolishingEnabled = false
+        var finalPolishingConfiguration: TranscriptPolishingConfiguration? = null
+        var acousticDecoderSettings: AcousticDecoderSettings? = null
         @Volatile var stopDrainTimeout: Runnable? = null
 
         @Synchronized fun closeAudioFile() { runCatching { audioFile?.close() } }
@@ -78,6 +85,28 @@ class SpeechEngine private constructor(private val context: Context) {
         val hotwordsScore: Float,
         val hotwords: List<String>
     )
+
+    private data class AcousticDecoderSettings(
+        val vocabulary: Set<String>,
+        val vocabularyEnabled: Boolean,
+        val maxActivePaths: Int,
+        val hotwordsScore: Float
+    )
+
+    private data class CapturedPcmRange(
+        val samples: ShortArray,
+        val startSample: Int,
+        val endExclusive: Int
+    )
+
+    private data class TdtPcmChunk(
+        val sequence: Int,
+        val samples: ShortArray,
+        val startSample: Int,
+        val endExclusive: Int
+    )
+
+    private data class TdtCaptureResult(val samples: FloatArray, val text: String)
 
     val isExternalSessionActive: Boolean get() = session?.let {
         it.owner != null && it.owner !== historyReprocessOwnerMarker
@@ -174,16 +203,26 @@ class SpeechEngine private constructor(private val context: Context) {
             return false
         }
         current.modelId = ModelInfo.getModelById(prefs.selectedModelId).id
+        val selectedModel = ModelInfo.getModelById(current.modelId)
+        val isTdtModel = current.modelId == AppPreferences.MODEL_PARAKEET_V2 ||
+            current.modelId == AppPreferences.MODEL_PARAKEET_V3
+        val liveTdt = isTdtModel && !selectedModel.streaming && current.audioFile == null &&
+            current.historyAudioInputFileName == null
+        if (liveTdt) current.acousticDecoderSettings = snapshotAcousticDecoderSettings()
         session = current
         // Keep the control active during mic startup, but expose a distinct not-yet-recording state.
         setState(!hasCompletedAudio, true, if (hasCompletedAudio) "loading" else "starting")
         val job = scope.launch {
             try {
-                val model = ModelInfo.getModelById(current.modelId)
+                val model = selectedModel
                 val liveStreaming = model.streaming && current.audioFile == null &&
                     current.historyAudioInputFileName == null
                 val samples = if (liveStreaming) {
                     val capture = captureAndTranscribeStreaming(current)
+                    current.text = capture.text
+                    capture.samples
+                } else if (liveTdt) {
+                    val capture = captureAndTranscribeTdtChunks(current)
                     current.text = capture.text
                     capture.samples
                 } else withContext(Dispatchers.IO) {
@@ -218,8 +257,14 @@ class SpeechEngine private constructor(private val context: Context) {
                     }
                     val originalText = current.text.orEmpty()
                     if (!current.cancelled && prefs.serviceEnabled && originalText.isNotBlank()) {
+                        val polishingEnabled = if (current.finalTextSettingsCaptured) {
+                            current.finalPolishingEnabled
+                        } else {
+                            prefs.transcriptPolishingEnabled
+                        }
                         val polishingConfiguration = current.historyPolishingConfiguration ?:
-                            if (current.historyAudioInputFileName == null && prefs.transcriptPolishingEnabled) {
+                            current.finalPolishingConfiguration ?:
+                            if (current.historyAudioInputFileName == null && polishingEnabled) {
                                 TranscriptPolishingConfiguration(
                                     baseUrl = prefs.transcriptPolishingEndpoint,
                                     model = prefs.transcriptPolishingModel,
@@ -227,7 +272,7 @@ class SpeechEngine private constructor(private val context: Context) {
                                     systemPrompt = prefs.customTranscriptPolishingSystemPrompt ?: TranscriptPolisher.SYSTEM_PROMPT
                                 )
                             } else null
-                        val polishingAllowed = prefs.transcriptPolishingEnabled &&
+                        val polishingAllowed = polishingEnabled &&
                             (current.historyAudioInputFileName == null || current.historyPolishingConfiguration != null)
                         if (!current.cancelled && polishingAllowed && polishingConfiguration != null) {
                             setState(false, true, "polishing")
@@ -239,7 +284,12 @@ class SpeechEngine private constructor(private val context: Context) {
                                 systemPrompt = polishingConfiguration.systemPrompt
                             )
                             if (!current.cancelled) setState(false, true, "processing")
-                            current.text = if (!current.cancelled && prefs.transcriptPolishingEnabled) {
+                            val stillEnabled = if (current.finalTextSettingsCaptured) {
+                                current.finalPolishingEnabled
+                            } else {
+                                prefs.transcriptPolishingEnabled
+                            }
+                            current.text = if (!current.cancelled && stillEnabled) {
                                 polishedText ?: originalText
                             } else originalText
                         }
@@ -356,14 +406,16 @@ class SpeechEngine private constructor(private val context: Context) {
     private fun initializeEngine(
         forceUnbiased: Boolean = false,
         modelId: String = prefs.selectedModelId,
-        deferTranscriptTransforms: Boolean = false
+        deferTranscriptTransforms: Boolean = false,
+        decoderSettings: AcousticDecoderSettings? = null
     ) {
         val model = ModelInfo.getModelById(modelId)
         if (!deferTranscriptTransforms) snapshotTranscriptTransforms()
         // Decoder context is independent of final-text transforms.
-        val vocabulary = prefs.getVocabulary().toSet()
+        val vocabulary = decoderSettings?.vocabulary ?: prefs.getVocabulary().toSet()
 
-        val safeHotwords = if (!forceUnbiased && !model.streaming && prefs.acousticVocabularyEnabled) {
+        val acousticVocabularyEnabled = decoderSettings?.vocabularyEnabled ?: prefs.acousticVocabularyEnabled
+        val safeHotwords = if (!forceUnbiased && !model.streaming && acousticVocabularyEnabled) {
             vocabulary.asSequence()
                 .map { it.trim().replace(Regex("""\s+"""), " ") }
                 .filter { it.length in 1..80 && HOTWORD_PATTERN.matches(it) }
@@ -375,8 +427,8 @@ class SpeechEngine private constructor(private val context: Context) {
         val configKey = DecoderConfigKey(
             modelId = model.id,
             acousticBiasEnabled = useAcousticBias,
-            maxActivePaths = if (useAcousticBias) prefs.acousticMaxActivePaths else 1,
-            hotwordsScore = if (useAcousticBias) prefs.acousticHotwordsScore else 0f,
+            maxActivePaths = if (useAcousticBias) decoderSettings?.maxActivePaths ?: prefs.acousticMaxActivePaths else 1,
+            hotwordsScore = if (useAcousticBias) decoderSettings?.hotwordsScore ?: prefs.acousticHotwordsScore else 0f,
             hotwords = safeHotwords
         )
         val recognizerLoaded = if (model.streaming) onlineRecognizer != null else recognizer != null
@@ -454,6 +506,28 @@ class SpeechEngine private constructor(private val context: Context) {
         stringReplacer = CustomStringReplacer(prefs.getStringReplacementRules())
     }
 
+    private fun snapshotAcousticDecoderSettings() = AcousticDecoderSettings(
+        vocabulary = prefs.getVocabulary().toSet(),
+        vocabularyEnabled = prefs.acousticVocabularyEnabled,
+        maxActivePaths = prefs.acousticMaxActivePaths,
+        hotwordsScore = prefs.acousticHotwordsScore
+    )
+
+    /** Freeze final-text behavior at explicit Stop, while chunk ASR may still be draining. */
+    private fun snapshotFinalizationSettings(current: Session) {
+        snapshotTranscriptTransforms()
+        current.finalPolishingEnabled = prefs.transcriptPolishingEnabled
+        current.finalPolishingConfiguration = if (current.finalPolishingEnabled) {
+            TranscriptPolishingConfiguration(
+                baseUrl = prefs.transcriptPolishingEndpoint,
+                model = prefs.transcriptPolishingModel,
+                vocabulary = prefs.getVocabulary().toSet(),
+                systemPrompt = prefs.customTranscriptPolishingSystemPrompt ?: TranscriptPolisher.SYSTEM_PROMPT
+            )
+        } else null
+        current.finalTextSettingsCaptured = true
+    }
+
     /** Materialize the selected model's matching BPE vocabulary as a private file for sherpa-onnx. */
     private fun installBpeVocab(model: ModelInfo): File {
         val assetName = if (model.id == AppPreferences.MODEL_PARAKEET_V3) {
@@ -486,6 +560,215 @@ class SpeechEngine private constructor(private val context: Context) {
     }
 
     private data class StreamingCaptureResult(val samples: FloatArray, val text: String)
+
+    /**
+     * Capture stays independent of both VAD and offline TDT JNI work. The raw-range queue holds
+     * descriptors into the fixed capture buffer and is sized for the complete 120-second cap.
+     */
+    private suspend fun captureAndTranscribeTdtChunks(current: Session): TdtCaptureResult =
+        withContext(Dispatchers.Default) {
+            nativeLock.withLock {
+                if (current.cancelled || !prefs.serviceEnabled) {
+                    return@withLock TdtCaptureResult(floatArrayOf(), "")
+                }
+                coroutineScope {
+                    val pcmInput = Channel<CapturedPcmRange>(RAW_PCM_QUEUE_CAPACITY)
+                    val tdtChunks = Channel<TdtPcmChunk>(TDT_CHUNK_QUEUE_CAPACITY)
+                    var segmentationFailure: Exception? = null
+                    var decoderFailure: Exception? = null
+                    var decodedChunkCount = 0
+                    var decodedEndSample = 0
+                    val decodedTexts = ArrayList<String>()
+
+                    val segmenter = launch(Dispatchers.Default) {
+                        try {
+                            segmentLiveTdtAudio(current, pcmInput, tdtChunks)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            segmentationFailure = e
+                            // Keep draining capture descriptors; full-recording decode will recover.
+                            for (ignored in pcmInput) Unit
+                        } catch (e: LinkageError) {
+                            segmentationFailure = IllegalStateException("Silero VAD failed", e)
+                            for (ignored in pcmInput) Unit
+                        } finally {
+                            tdtChunks.close()
+                        }
+                    }
+
+                    val decoder = launch(Dispatchers.Default) {
+                        var expectedSequence = 0
+                        var expectedStart = 0
+                        var failure: Exception? = null
+                        var initialized = false
+                        for (chunk in tdtChunks) {
+                            if (current.cancelled || !prefs.serviceEnabled) continue
+                            if (chunk.sequence != expectedSequence || chunk.startSample != expectedStart ||
+                                chunk.endExclusive <= chunk.startSample || chunk.endExclusive > chunk.samples.size) {
+                                failure = IllegalStateException("TDT chunk ranges are not contiguous and ordered.")
+                            }
+                            expectedSequence = chunk.sequence + 1
+                            expectedStart = chunk.endExclusive
+                            decodedChunkCount = expectedSequence
+                            decodedEndSample = expectedStart
+                            if (failure != null) continue
+                            try {
+                                if (!initialized) {
+                                    initializeEngine(
+                                        modelId = current.modelId,
+                                        deferTranscriptTransforms = true,
+                                        decoderSettings = current.acousticDecoderSettings
+                                    )
+                                    initialized = true
+                                }
+                                val floatChunk = FloatArray(chunk.endExclusive - chunk.startSample) { index ->
+                                    chunk.samples[chunk.startSample + index] / 32768f
+                                }
+                                val text = decode(floatChunk, current).trim()
+                                if (!current.cancelled && prefs.serviceEnabled && text.isNotBlank()) {
+                                    decodedTexts += text
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                failure = e
+                            } catch (e: LinkageError) {
+                                failure = IllegalStateException("Native TDT chunk decode failed", e)
+                            }
+                        }
+                        decoderFailure = failure
+                    }
+
+                    val samples = try {
+                        withContext(Dispatchers.IO) {
+                            captureRecording(current, onVadInput = { range -> pcmInput.send(range) })
+                        }
+                    } finally {
+                        pcmInput.close()
+                    }
+                    segmenter.join()
+                    if (!current.cancelled && decoder.isActive) {
+                        withContext(Dispatchers.Main) {
+                            if (session === current && !current.cancelled) {
+                                setState(false, true, "processing")
+                            }
+                        }
+                    }
+                    decoder.join()
+                    if (current.cancelled || !prefs.serviceEnabled || samples.isEmpty()) {
+                        return@coroutineScope TdtCaptureResult(samples, "")
+                    }
+
+                    val failure = segmentationFailure ?: decoderFailure
+                    val completeCoverage = decodedChunkCount > 0 && decodedEndSample == samples.size
+                    val text = if (failure != null || !completeCoverage) {
+                        Log.w(TAG, "Chunked TDT path incomplete (${failure?.javaClass?.simpleName ?: "range coverage"}); retrying full PCM")
+                        releaseNative()
+                        initializeEngine(
+                            modelId = current.modelId,
+                            deferTranscriptTransforms = true,
+                            decoderSettings = current.acousticDecoderSettings
+                        )
+                        // Preserve every captured sample; do not apply per-recording endpoint trimming.
+                        decode(samples, current)
+                    } else {
+                        decodedTexts.joinToString(" ")
+                    }
+                    TdtCaptureResult(samples, text)
+                }
+            }
+        }
+
+    /** Consumes contiguous raw PCM ranges, emits speech-to-silence chunks, and emits the tail once. */
+    private suspend fun segmentLiveTdtAudio(
+        current: Session,
+        pcmInput: Channel<CapturedPcmRange>,
+        tdtChunks: Channel<TdtPcmChunk>
+    ) {
+        var detector: SpeechActivityDetector? = null
+        var lastDetected = false
+        var nextChunkStart = 0
+        var expectedInputStart = 0
+        var sequence = 0
+        var recording: ShortArray? = null
+        try {
+            try {
+                detector = SpeechActivityDetector(context, tdtChunking = true)
+                updateSpeechActivity(current, available = true, detected = false)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: LinkageError) {
+                Log.w(TAG, "Speech activity native code unavailable; preserving full PCM for TDT", e)
+                updateSpeechActivity(current, available = false, detected = false)
+            } catch (e: Exception) {
+                Log.w(TAG, "Speech activity detector unavailable; preserving full PCM for TDT", e)
+                updateSpeechActivity(current, available = false, detected = false)
+            }
+
+            for (range in pcmInput) {
+                check(range.startSample == expectedInputStart && range.endExclusive > range.startSample)
+                check(range.endExclusive <= range.samples.size)
+                if (recording == null) recording = range.samples else check(recording === range.samples)
+                expectedInputStart = range.endExclusive
+                val activeDetector = detector
+                if (activeDetector == null || current.cancelled) continue
+
+                val updates = try {
+                    activeDetector.acceptPcm16(
+                        range.samples,
+                        range.startSample,
+                        range.endExclusive - range.startSample
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: LinkageError) {
+                    Log.w(TAG, "Speech activity native code stopped; preserving remaining PCM", e)
+                    activeDetector.close()
+                    detector = null
+                    updateSpeechActivity(current, available = false, detected = false)
+                    continue
+                } catch (e: Exception) {
+                    Log.w(TAG, "Speech activity detection stopped; preserving remaining PCM", e)
+                    activeDetector.close()
+                    detector = null
+                    updateSpeechActivity(current, available = false, detected = false)
+                    continue
+                }
+
+                for (update in updates) {
+                    if (update.detected != lastDetected) {
+                        lastDetected = update.detected
+                        updateSpeechActivity(current, available = true, detected = update.detected)
+                    }
+                    if (update.speechEnded && !current.cancelled) {
+                        check(update.processedSamples in nextChunkStart..expectedInputStart)
+                        if (update.processedSamples > nextChunkStart) {
+                            tdtChunks.send(TdtPcmChunk(
+                                sequence = sequence++,
+                                samples = range.samples,
+                                startSample = nextChunkStart,
+                                endExclusive = update.processedSamples
+                            ))
+                            nextChunkStart = update.processedSamples
+                        }
+                    }
+                }
+            }
+
+            val finalSamples = recording
+            if (!current.cancelled && finalSamples != null && expectedInputStart > nextChunkStart) {
+                tdtChunks.send(TdtPcmChunk(
+                    sequence = sequence,
+                    samples = finalSamples,
+                    startSample = nextChunkStart,
+                    endExclusive = expectedInputStart
+                ))
+            }
+        } finally {
+            detector?.close()
+        }
+    }
 
     /** Run only for the selected streaming model; keep raw PCM capture separate from ASR work. */
     private suspend fun captureAndTranscribeStreaming(current: Session): StreamingCaptureResult =
@@ -540,9 +823,9 @@ class SpeechEngine private constructor(private val context: Context) {
 
                         val samples = try {
                             withContext(Dispatchers.IO) {
-                                captureRecording(current) { chunk ->
+                                captureRecording(current, onStreamingChunk = { chunk ->
                                     if (!current.cancelled) chunks.send(chunk)
-                                }
+                                })
                             }
                         } finally {
                             chunks.close()
@@ -557,11 +840,12 @@ class SpeechEngine private constructor(private val context: Context) {
             }
         }
 
-    /** Capture every PCM sample; the optional bounded callback is used only by streaming ASR. */
+    /** Capture every PCM sample; optional queues receive immutable ranges into the capture buffer. */
     @SuppressLint("MissingPermission")
     private suspend fun captureRecording(
         current: Session,
-        onStreamingChunk: (suspend (ShortArray) -> Unit)? = null
+        onStreamingChunk: (suspend (ShortArray) -> Unit)? = null,
+        onVadInput: (suspend (CapturedPcmRange) -> Unit)? = null
     ): FloatArray {
         if (current.stopped || current.cancelled) return floatArrayOf()
         val minBytes = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -570,27 +854,29 @@ class SpeechEngine private constructor(private val context: Context) {
         var count = 0
         var streamChunk = if (onStreamingChunk == null) null else ShortArray(STREAM_CHUNK_SAMPLES)
         var streamChunkCount = 0
+        var vadInputEnd = 0
         val audio = AudioRecord(MediaRecorder.AudioSource.MIC, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT, maxOf(minBytes * 4, SAMPLE_RATE * 2))
         var speechDetector: SpeechActivityDetector? = null
-        var lastSpeechDetected = false
-        try {
-            speechDetector = SpeechActivityDetector(context)
-            updateSpeechActivity(current, available = true, detected = false)
-        } catch (e: CancellationException) {
-            speechDetector?.close()
-            audio.release()
-            throw e
-        } catch (e: LinkageError) {
-            speechDetector?.close()
-            speechDetector = null
-            Log.w(TAG, "Speech activity native code unavailable; continuing capture", e)
-            updateSpeechActivity(current, available = false, detected = false)
-        } catch (e: Exception) {
-            speechDetector?.close()
-            speechDetector = null
-            Log.w(TAG, "Speech activity detector unavailable; continuing capture", e)
-            updateSpeechActivity(current, available = false, detected = false)
+        if (onVadInput == null) {
+            try {
+                speechDetector = SpeechActivityDetector(context)
+                updateSpeechActivity(current, available = true, detected = false)
+            } catch (e: CancellationException) {
+                speechDetector?.close()
+                audio.release()
+                throw e
+            } catch (e: LinkageError) {
+                speechDetector?.close()
+                speechDetector = null
+                Log.w(TAG, "Speech activity native code unavailable; continuing capture", e)
+                updateSpeechActivity(current, available = false, detected = false)
+            } catch (e: Exception) {
+                speechDetector?.close()
+                speechDetector = null
+                Log.w(TAG, "Speech activity detector unavailable; continuing capture", e)
+                updateSpeechActivity(current, available = false, detected = false)
+            }
         }
         suspend fun flushStreamingChunk() {
             val pending = streamChunk ?: return
@@ -631,10 +917,8 @@ class SpeechEngine private constructor(private val context: Context) {
                     val detector = speechDetector
                     if (detector != null && !current.cancelled && !current.stopped) {
                         try {
-                            val detected = detector.acceptPcm16(recording, readStart, read)
-                            if (detected != null && detected != lastSpeechDetected) {
-                                lastSpeechDetected = detected
-                                updateSpeechActivity(current, available = true, detected = detected)
+                            for (update in detector.acceptPcm16(recording, readStart, read)) {
+                                updateSpeechActivity(current, available = true, detected = update.detected)
                             }
                         } catch (e: CancellationException) {
                             throw e
@@ -648,6 +932,13 @@ class SpeechEngine private constructor(private val context: Context) {
                             detector.close()
                             speechDetector = null
                             updateSpeechActivity(current, available = false, detected = false)
+                        }
+                    }
+                    if (onVadInput != null && !current.cancelled) {
+                        while (count - vadInputEnd >= CAPTURE_READ_SAMPLES) {
+                            val endExclusive = vadInputEnd + CAPTURE_READ_SAMPLES
+                            onVadInput(CapturedPcmRange(recording, vadInputEnd, endExclusive))
+                            vadInputEnd = endExclusive
                         }
                     }
                     val pending = streamChunk
@@ -703,6 +994,9 @@ class SpeechEngine private constructor(private val context: Context) {
         }
         if (current.cancelled || !prefs.serviceEnabled) return floatArrayOf()
         check(current.stopped) { "Recording must be explicitly stopped before transcription." }
+        if (onVadInput != null && vadInputEnd < count) {
+            onVadInput(CapturedPcmRange(recording, vadInputEnd, count))
+        }
         flushStreamingChunk()
         return FloatArray(count) { recording[it] / 32768f }
     }
@@ -800,9 +1094,15 @@ class SpeechEngine private constructor(private val context: Context) {
         if (current.cancelled) current.closeAudioFile()
         // Completed files already exist: STOP is a no-op; only CANCEL discards their result.
         if (current.audioFile != null || current.historyAudioInputFileName != null) return
-        if (!current.cancelled && ModelInfo.getModelById(current.modelId).streaming) {
-            // Snapshot final-text rules at the user's Stop action, while online decoding drains.
+        val model = ModelInfo.getModelById(current.modelId)
+        val liveTdt = current.modelId == AppPreferences.MODEL_PARAKEET_V2 ||
+            current.modelId == AppPreferences.MODEL_PARAKEET_V3
+        if (!current.cancelled && model.streaming) {
+            // Preserve Unified's existing Stop-time spelling/filler snapshot behavior.
             snapshotTranscriptTransforms()
+        } else if (!current.cancelled && liveTdt && !current.finalTextSettingsCaptured) {
+            // Freeze TDT final-text behavior at Stop while its ordered chunk queue drains.
+            snapshotFinalizationSettings(current)
         }
         current.stopped = true
         current.stopRequested.complete(Unit)
@@ -892,7 +1192,10 @@ class SpeechEngine private constructor(private val context: Context) {
     private suspend fun updateSpeechActivity(current: Session, available: Boolean, detected: Boolean) {
         withContext(Dispatchers.Main.immediate) {
             if (session !== current || current.cancelled || current.stopped) return@withContext
-            val nextDetected = available && detected
+            val asynchronousTdt = current.audioFile == null && current.historyAudioInputFileName == null &&
+                (current.modelId == AppPreferences.MODEL_PARAKEET_V2 ||
+                    current.modelId == AppPreferences.MODEL_PARAKEET_V3)
+            val nextDetected = available && detected && !(asynchronousTdt && isAwaitingStop)
             val changed = speechActivityDetectionAvailable != available || isSpeechDetected != nextDetected
             speechActivityDetectionAvailable = available
             isSpeechDetected = nextDetected
