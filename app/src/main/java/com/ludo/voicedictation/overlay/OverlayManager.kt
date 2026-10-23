@@ -408,11 +408,13 @@ class OverlayManager(private val context: Context) {
         val root = overlayView ?: return
         val externalSession = speechEngine.isExternalSessionActive
         root.contentDescription = when {
+            externalSession && speechEngine.currentStatus == "polishing" -> "Polishing Hermes dictation"
             externalSession && speechEngine.currentStatus == "loading" -> "Loading model for Hermes dictation"
             externalSession && speechEngine.currentStatus == "processing" -> "Processing Hermes dictation"
             externalSession && speechEngine.isAwaitingStop -> "Recording limit reached; stop or cancel in Hermes"
             externalSession && isRecording -> "Recording controlled by Hermes"
             externalSession -> "Dictation controlled by Hermes"
+            speechEngine.currentStatus == "polishing" -> "Polishing dictated text"
             speechEngine.currentStatus == "starting" -> "Starting recording. Tap to stop and transcribe. Hold to discard."
             speechEngine.currentStatus == "loading" -> "Loading recognition model"
             isProcessing -> "Transcribing recording"
@@ -426,6 +428,9 @@ class OverlayManager(private val context: Context) {
         val ivIcon = root.findViewById<ImageView>(R.id.ivOverlayIcon) ?: return
         val pbProcessing = root.findViewById<ProgressBar>(R.id.pbOverlayProcessing) ?: return
         val pulseRing = root.findViewById<View>(R.id.pulseRing) ?: return
+        pbProcessing.indeterminateTintList = context.getColorStateList(
+            if (speechEngine.currentStatus == "polishing") R.color.success else R.color.accent
+        )
 
         val alphaVal = prefs.overlayOpacity / 100f
 

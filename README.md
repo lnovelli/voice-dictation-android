@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.2.1 (build 22; ARM64-only)
+## Current release: v1.2.2 (build 23; ARM64-only)
 
-Adds Parakeet Unified 0.6B as an optional English streaming model. When selected, recognition runs on incoming audio chunks while recording; no transcript preview is displayed. Stop flushes the online recognizer and returns its final transcript. TDT v2/v3 retain their existing capture-only/full-recording decode path. All audio remains on-device, and updates remain manual. See [Parakeet Unified streaming](docs/parakeet-unified-streaming-1.2.1.md).
+Adds distinct floating-spinner colors for ASR finalization (blue) and optional transcript polishing (green). The green phase appears only while the configured text polisher is running; the spinner remains blue for model loading/recognition.
 
 ## Features
 

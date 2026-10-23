@@ -224,7 +224,8 @@ class SpeechEngine private constructor(private val context: Context) {
                             } else null
                         val polishingAllowed = prefs.transcriptPolishingEnabled &&
                             (current.historyAudioInputFileName == null || current.historyPolishingConfiguration != null)
-                        if (polishingAllowed && polishingConfiguration != null) {
+                        if (!current.cancelled && polishingAllowed && polishingConfiguration != null) {
+                            setState(false, true, "polishing")
                             val polishedText = transcriptPolisher.polish(
                                 baseUrl = polishingConfiguration.baseUrl,
                                 model = polishingConfiguration.model,
@@ -232,6 +233,7 @@ class SpeechEngine private constructor(private val context: Context) {
                                 transcript = originalText,
                                 systemPrompt = polishingConfiguration.systemPrompt
                             )
+                            if (!current.cancelled) setState(false, true, "processing")
                             current.text = if (!current.cancelled && prefs.transcriptPolishingEnabled) {
                                 polishedText ?: originalText
                             } else originalText
@@ -764,7 +766,9 @@ class SpeechEngine private constructor(private val context: Context) {
             current.stopDrainTimeout = fallbackStop
             mainHandler.postDelayed(fallbackStop, STOP_DRAIN_TIMEOUT_MS)
         }
-        if (sessionJob?.isActive == true) setState(false, true, "loading")
+        if (sessionJob?.isActive == true) {
+            setState(false, true, if (ModelInfo.getModelById(current.modelId).streaming) "processing" else "loading")
+        }
     }
 
     fun cancelRecording() {
@@ -823,7 +827,11 @@ class SpeechEngine private constructor(private val context: Context) {
         onStateChanged?.invoke(recording, processing)
         val current = session
         if (current?.listener != null) {
-            if (!current.cancelled) current.listener.onState(state)
+            if (!current.cancelled) {
+                // Keep IPC and retry listeners on their existing protocol states; the local
+                // floating overlay reads currentStatus directly for the polishing color.
+                current.listener.onState(if (state == "polishing") "processing" else state)
+            }
         }
     }
 }
