@@ -3,8 +3,11 @@
 Live microphone commands are available in Voice Dictation 1.0.4 (versionCode 5).
 File transcription is added in **1.0.5 (versionCode 6)** without changing protocol 1.
 **1.0.8 (versionCode 9)** captures PCM only until explicit STOP, then performs
-exactly one unbiased TDT greedy decode over the complete recording. No streaming,
-VAD, previews, 20-second partitions or concatenated per-window final text.
+exactly one unbiased TDT greedy decode over the complete recording. That release had
+no streaming, VAD, previews, 20-second partitions or concatenated per-window final
+text. Since **1.2.3**, live microphone sessions also run bundled Silero VAD solely
+to color the floating speech-activity indicator; it does not alter PCM, ASR, IPC,
+or completed-file transcription. No IPC protocol change was made.
 At 120 seconds capture closes, but PCM waits for explicit STOP or CANCEL; no
 automatic decode occurs. Completed command-4 files decode directly without waiting.
 The total IPC deadline remains ten minutes. Vocabulary remains optional spelling-only;
@@ -28,7 +31,9 @@ unsafe native acoustic bias stays disabled. See [verification and limitations](r
   are rejected without operating the microphone. Caller identity in the Bundle is
   never trusted.
 - Enable **Enable dictation service** in Voice Dictation Settings and download the
-  selected ASR model (encoder/decoder/joiner/tokens only; no VAD). Live START additionally requires microphone
+  selected ASR model (encoder/decoder/joiner/tokens). The bundled visual-only
+  Silero VAD initializes automatically for live START; completed-file transcription
+  does not initialize it. Live START additionally requires microphone
   runtime permission in both apps. File transcription requires **no microphone
   permission** in either phone app and never opens the phone microphone.
   Accessibility and overlay permissions are **not** required for either IPC path.

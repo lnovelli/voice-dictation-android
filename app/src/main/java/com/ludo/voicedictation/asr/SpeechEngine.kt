@@ -113,7 +113,12 @@ class SpeechEngine private constructor(private val context: Context) {
         private set
     @Volatile var currentStatus: String = "ready"
         private set
+    @Volatile var isSpeechDetected: Boolean = false
+        private set
+    @Volatile var speechActivityDetectionAvailable: Boolean = false
+        private set
     var onStateChanged: ((Boolean, Boolean) -> Unit)? = null
+    var onSpeechActivityChanged: (() -> Unit)? = null
     var onRecordingLimit: (() -> Unit)? = null
     var onFinalResult: ((String) -> Unit)? = null
     var onError: ((String) -> Unit)? = null
@@ -282,6 +287,7 @@ class SpeechEngine private constructor(private val context: Context) {
                 isAwaitingStop = false
                 isProcessing = false
                 currentStatus = "ready"
+                clearSpeechActivity()
                 onStateChanged?.invoke(false, false)
                 if (current.cancelled) {
                     HistoryAudioStore.delete(context, current.historyAudioFileName)
@@ -564,6 +570,28 @@ class SpeechEngine private constructor(private val context: Context) {
         var count = 0
         var streamChunk = if (onStreamingChunk == null) null else ShortArray(STREAM_CHUNK_SAMPLES)
         var streamChunkCount = 0
+        val audio = AudioRecord(MediaRecorder.AudioSource.MIC, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT, maxOf(minBytes * 4, SAMPLE_RATE * 2))
+        var speechDetector: SpeechActivityDetector? = null
+        var lastSpeechDetected = false
+        try {
+            speechDetector = SpeechActivityDetector(context)
+            updateSpeechActivity(current, available = true, detected = false)
+        } catch (e: CancellationException) {
+            speechDetector?.close()
+            audio.release()
+            throw e
+        } catch (e: LinkageError) {
+            speechDetector?.close()
+            speechDetector = null
+            Log.w(TAG, "Speech activity native code unavailable; continuing capture", e)
+            updateSpeechActivity(current, available = false, detected = false)
+        } catch (e: Exception) {
+            speechDetector?.close()
+            speechDetector = null
+            Log.w(TAG, "Speech activity detector unavailable; continuing capture", e)
+            updateSpeechActivity(current, available = false, detected = false)
+        }
         suspend fun flushStreamingChunk() {
             val pending = streamChunk ?: return
             if (streamChunkCount > 0 && !current.cancelled) {
@@ -571,8 +599,6 @@ class SpeechEngine private constructor(private val context: Context) {
                 streamChunkCount = 0
             }
         }
-        val audio = AudioRecord(MediaRecorder.AudioSource.MIC, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT, maxOf(minBytes * 4, SAMPLE_RATE * 2))
         try {
             synchronized(recorderLock) {
                 check(audio.state == AudioRecord.STATE_INITIALIZED) { "Microphone could not be initialized." }
@@ -602,6 +628,28 @@ class SpeechEngine private constructor(private val context: Context) {
                 if (read > 0) {
                     val readStart = count
                     count += read
+                    val detector = speechDetector
+                    if (detector != null && !current.cancelled && !current.stopped) {
+                        try {
+                            val detected = detector.acceptPcm16(recording, readStart, read)
+                            if (detected != null && detected != lastSpeechDetected) {
+                                lastSpeechDetected = detected
+                                updateSpeechActivity(current, available = true, detected = detected)
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: LinkageError) {
+                            Log.w(TAG, "Speech activity native code stopped; continuing capture", e)
+                            detector.close()
+                            speechDetector = null
+                            updateSpeechActivity(current, available = false, detected = false)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Speech activity detection stopped; continuing capture", e)
+                            detector.close()
+                            speechDetector = null
+                            updateSpeechActivity(current, available = false, detected = false)
+                        }
+                    }
                     val pending = streamChunk
                     if (pending != null && !current.cancelled) {
                         var sourceOffset = readStart
@@ -634,8 +682,13 @@ class SpeechEngine private constructor(private val context: Context) {
                     }
                 } finally { audio.release() }
             }
+            speechDetector?.close()
             current.stopDrainTimeout?.let(mainHandler::removeCallbacks)
             current.stopDrainTimeout = null
+        }
+        if (!current.stopped && !current.cancelled && count == recording.size && speechActivityDetectionAvailable) {
+            // Capture has ended at its explicit duration cap; show silence while awaiting Stop/Cancel.
+            updateSpeechActivity(current, available = true, detected = false)
         }
         if (!current.stopped && !current.cancelled && count == MAX_LIVE_SAMPLES) {
             flushStreamingChunk()
@@ -824,6 +877,7 @@ class SpeechEngine private constructor(private val context: Context) {
         isAwaitingStop = state == "recording_limit"
         isProcessing = processing
         currentStatus = state
+        if (!recording) clearSpeechActivity()
         onStateChanged?.invoke(recording, processing)
         val current = session
         if (current?.listener != null) {
@@ -833,5 +887,23 @@ class SpeechEngine private constructor(private val context: Context) {
                 current.listener.onState(if (state == "polishing") "processing" else state)
             }
         }
+    }
+
+    private suspend fun updateSpeechActivity(current: Session, available: Boolean, detected: Boolean) {
+        withContext(Dispatchers.Main.immediate) {
+            if (session !== current || current.cancelled || current.stopped) return@withContext
+            val nextDetected = available && detected
+            val changed = speechActivityDetectionAvailable != available || isSpeechDetected != nextDetected
+            speechActivityDetectionAvailable = available
+            isSpeechDetected = nextDetected
+            if (changed) onSpeechActivityChanged?.invoke()
+        }
+    }
+
+    private fun clearSpeechActivity() {
+        val changed = speechActivityDetectionAvailable || isSpeechDetected
+        speechActivityDetectionAvailable = false
+        isSpeechDetected = false
+        if (changed) onSpeechActivityChanged?.invoke()
     }
 }

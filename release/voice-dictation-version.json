@@ -1,7 +1,7 @@
 {
-  "version_code": 23,
-  "version_name": "1.2.2",
-  "download_url": "https://github.com/lnovelli/voice-dictation-android/releases/download/v1.2.2/voice-dictation.apk",
-  "sha256": "928490134fddb06c590bd2d364a6232727c27a9de0a5b9e0eb7957158a99f130",
-  "release_notes": "v1.2.2: The floating processing spinner is blue during model loading and speech recognition, and green while optional transcript polishing is running. Existing Parakeet TDT and Unified recognition behavior is unchanged. ARM64-only; updates remain manual."
+  "version_code": 24,
+  "version_name": "1.2.3",
+  "download_url": "https://github.com/lnovelli/voice-dictation-android/releases/download/v1.2.3/voice-dictation.apk",
+  "sha256": "acb00a3fb7f70024e377ad2f42ff759e24c11a98660b8a2752dc5591720f04a1",
+  "release_notes": "v1.2.3: Bundles Silero 16 kHz INT8 VAD for a visual-only speech-activity indicator. The floating button breathes gray when no speech is detected and red when speech is detected. VAD does not filter captured audio or alter recognition. Retains the blue ASR-processing and green transcript-polishing spinner phases. ARM64-only; updates remain manual."
 }

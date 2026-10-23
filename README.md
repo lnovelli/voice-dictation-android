@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.2.2 (build 23; ARM64-only)
+## Current release: v1.2.3 (build 24; ARM64-only)
 
-Adds distinct floating-spinner colors for ASR finalization (blue) and optional transcript polishing (green). The green phase appears only while the configured text polisher is running; the spinner remains blue for model loading/recognition.
+Bundles Silero 16 kHz INT8 VAD for a visual-only speech-activity indicator: the floating recording button breathes gray when no speech is detected and red when speech is detected. VAD never filters or changes captured audio or transcript results. The release also retains the blue ASR-processing and green polishing spinner phases.
 
 ## Features
 
@@ -23,9 +23,10 @@ Adds distinct floating-spinner colors for ASR finalization (blue) and optional t
   - Draggable partly beyond any screen edge, with independent saved positions for portrait and landscape; an unset position starts vertically centered at the right edge.
   - Adjustable floating icon size (50–150%) and opacity, applied immediately from Settings.
   - Hides automatically when focus moves away from text fields.
+- **Speech-activity indicator (1.2.3):** Bundles the 212,860-byte Silero 16 kHz INT8 model. During live microphone recording, the floating button keeps its breathing animation but is gray when the VAD reports no speech and red when it detects speech. VAD is visual feedback only: it does not trim, segment, filter, or transcribe audio. If initialization fails, recording continues with the existing red recording indication.
 - **Model-specific capture and recognition (1.2.1):**
-  - **TDT v2/v3:** Capture exact bounded PCM only. No streaming recognition, previews, VAD or native inference runs during capture. Explicit Stop loads/reuses the model and runs one unbiased full-recording decode by default; the optional acoustic vocabulary setting applies only to TDT.
-  - **Parakeet Unified:** The online recognizer consumes bounded audio batches while AudioRecord continues capturing. Partial text stays internal and is never shown or inserted. Explicit Stop drains queued audio, flushes the online stream and returns that final transcript without a second full-recording pass. A bounded queue can retain the whole 120-second input if inference falls behind; in that case Stop still waits for the remaining backlog. Device throughput and latency need physical-phone validation.
+  - **TDT v2/v3:** Capture exact bounded PCM only; no ASR inference or preview runs during capture. The small Silero VAD runs only for the visual indicator. Explicit Stop loads/reuses the ASR model and runs one unbiased full-recording decode by default; the optional acoustic vocabulary setting applies only to TDT.
+  - **Parakeet Unified:** The online recognizer consumes bounded audio batches while AudioRecord continues capturing; Silero VAD separately supplies only the visual speech indicator. Partial text stays internal and is never shown or inserted. Explicit Stop drains queued audio, flushes the online stream and returns that final transcript without a second full-recording pass. A bounded queue can retain the whole 120-second input if inference falls behind; in that case Stop still waits for the remaining backlog. Device throughput and latency need physical-phone validation.
   - All live modes retain the original PCM independently of recognition for the existing final transcript/history workflow. The Unified model is English-only; acoustic hotword bias is disabled for it, while final spelling/replacement/filler rules and optional text-only polishing remain unchanged.
   - Hold the recording button during capture or pending final processing to discard and suppress the result. An already-running native decode cannot be interrupted, but its output is discarded. Release after a hold cannot restart; dragging cancels the hold timer, and cancelled touch gestures do not stop or discard audio. Accessible click/long-click and haptic cues are provided.
   - At 120 seconds, microphone capture closes and bounded PCM waits for your explicit Stop or Cancel. A toast explains the limit; Stop stays available. Reaching the cap never initiates finalization.

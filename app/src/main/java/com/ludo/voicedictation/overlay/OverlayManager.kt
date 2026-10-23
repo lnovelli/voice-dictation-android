@@ -74,6 +74,10 @@ class OverlayManager(private val context: Context) {
                 overlayView?.post { onSessionIdle?.invoke() }
             }
         }
+        speechEngine.onSpeechActivityChanged = {
+            if (speechEngine.isExternalSessionActive && canShowExternalStatus()) show()
+            else updateOverlayVisuals(speechEngine.isRecording, speechEngine.isProcessing)
+        }
         speechEngine.onRecordingLimit = {
             val message = "120-second limit reached. Tap Stop to transcribe, or hold to discard."
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
@@ -411,14 +415,19 @@ class OverlayManager(private val context: Context) {
             externalSession && speechEngine.currentStatus == "polishing" -> "Polishing Hermes dictation"
             externalSession && speechEngine.currentStatus == "loading" -> "Loading model for Hermes dictation"
             externalSession && speechEngine.currentStatus == "processing" -> "Processing Hermes dictation"
+            externalSession && speechEngine.currentStatus == "starting" -> "Starting Hermes dictation"
             externalSession && speechEngine.isAwaitingStop -> "Recording limit reached; stop or cancel in Hermes"
-            externalSession && isRecording -> "Recording controlled by Hermes"
+            externalSession && isRecording && !speechEngine.speechActivityDetectionAvailable -> "Recording controlled by Hermes; speech detection unavailable"
+            externalSession && isRecording && speechEngine.isSpeechDetected -> "Speech detected; recording controlled by Hermes"
+            externalSession && isRecording -> "No speech detected; recording controlled by Hermes"
             externalSession -> "Dictation controlled by Hermes"
             speechEngine.currentStatus == "polishing" -> "Polishing dictated text"
             speechEngine.currentStatus == "starting" -> "Starting recording. Tap to stop and transcribe. Hold to discard."
             speechEngine.currentStatus == "loading" -> "Loading recognition model"
             isProcessing -> "Transcribing recording"
             speechEngine.isAwaitingStop -> "Recording limit reached. Tap to transcribe. Hold to discard."
+            isRecording && !speechEngine.speechActivityDetectionAvailable -> "Recording. Speech detection unavailable. Tap to stop; hold to discard."
+            isRecording && speechEngine.isSpeechDetected -> "Speech detected. Recording. Tap to stop; hold to discard."
             isRecording -> "Recording. Tap to stop and transcribe. Hold to discard."
             else -> "Ready to record"
         }
@@ -445,7 +454,13 @@ class OverlayManager(private val context: Context) {
             pbProcessing.visibility = View.GONE
             ivIcon.visibility = View.VISIBLE
             ivIcon.setImageResource(if (externalSession) R.drawable.ic_mic else R.drawable.ic_stop)
-            btnCircle.setBackgroundResource(R.drawable.bg_overlay_recording)
+            val recordingBackground = if (!speechEngine.speechActivityDetectionAvailable || speechEngine.isSpeechDetected) {
+                R.drawable.bg_overlay_recording
+            } else {
+                R.drawable.bg_overlay_no_speech
+            }
+            btnCircle.setBackgroundResource(recordingBackground)
+            pulseRing.setBackgroundResource(recordingBackground)
             root.alpha = 1.0f
 
             if (speechEngine.isAwaitingStop) {

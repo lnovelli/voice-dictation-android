@@ -7,6 +7,7 @@
     <color name="accent">#00B0FF</color>
     <color name="recording_red">#FF3B30</color>
     <color name="recording_red_dark">#D32F2F</color>
+    <color name="overlay_no_speech">#FF757575</color>
     <color name="background_dark">#121212</color>
     <color name="surface_dark">#1E1E1E</color>
     <color name="surface_variant_dark">#2C2C2C</color>
