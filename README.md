@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.2.5 (build 26; ARM64-only)
+## Current release: v1.2.6 (build 27; ARM64-only)
 
-Extends live capture to 10 minutes and adds a brief sound/haptic cue at the automatic stop. For live Parakeet TDT v2/v3, VAD-chunk transcription waits for a pause after at least 5 seconds of cumulative speech; short pauses stay within the same chunk. All source PCM remains queued in order. Unified, completed-file, and History recognition behavior remains unchanged.
+Prevents the floating dictation button from reappearing over competing Autofill/system windows. Temporarily hiding the button no longer cancels a live dictation session; the overlay returns when focus is back in the editor.
 
 See [live TDT chunking, safeguards, and limitations](docs/live-tdt-vad-chunking.md).
 

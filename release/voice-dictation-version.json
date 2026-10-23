@@ -1,7 +1,7 @@
 {
-  "version_code": 26,
-  "version_name": "1.2.5",
-  "download_url": "https://github.com/lnovelli/voice-dictation-android/releases/download/v1.2.5/voice-dictation.apk",
-  "sha256": "bd0c496c7db35db8d8a22e9975dc7316600dc94cc1e69131d5e8b75601172257",
-  "release_notes": "v1.2.5: Extends live capture to 10 minutes and gives a brief sound/haptic cue when the cap stops capture. Live TDT v2/v3 chunks now wait for a pause after at least five seconds of positively VAD-classified speech accumulated across short pauses; chunks remain ordered and the original PCM is preserved. Stop drains the tail and backlog before one final polishing step. Unified's online decoding path, completed-file and History recognition paths remain unchanged. Completed-file IPC input remains capped at 120 seconds; Voice Dictation's protected service uses a 15-minute total session deadline for capture and finalization. ARM64-only; updates remain manual. Recognition quality, latency and power use have not been validated on-device."
+  "version_code": 27,
+  "version_name": "1.2.6",
+  "download_url": "https://github.com/lnovelli/voice-dictation-android/releases/download/v1.2.6/voice-dictation.apk",
+  "sha256": "31a72ca98b46fcfb35eceafa2384fd56f2d6f9d90d120155a973b4ad69d9b678",
+  "release_notes": "v1.2.6: Prevents the floating dictation button from competing with Autofill/system windows. The overlay is temporarily hidden without cancelling a live dictation session, then restored when focus returns to the editor. ARM64-only; updates remain manual. Autofill behavior has not been device-validated."
 }

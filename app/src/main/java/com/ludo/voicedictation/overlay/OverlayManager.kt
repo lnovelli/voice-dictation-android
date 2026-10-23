@@ -140,8 +140,13 @@ class OverlayManager(private val context: Context) {
     }
 
     fun hide() {
-        cancelGesture?.invoke()
         speechEngine.cancelRecording()
+        hideTemporarily()
+    }
+
+    /** Hides only the floating view while another app/system surface is active; capture ownership is unchanged. */
+    fun hideTemporarily() {
+        cancelGesture?.invoke()
         pulseAnimator?.cancel()
         overlayView?.keepScreenOn = false
         overlayView?.visibility = View.GONE

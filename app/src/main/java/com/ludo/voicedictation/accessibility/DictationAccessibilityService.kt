@@ -33,6 +33,7 @@ class DictationAccessibilityService : AccessibilityService() {
     private lateinit var overlayManager: OverlayManager
     private val prefs by lazy { AppPreferences(this) }
     private var lastFocusedNode: AccessibilityNodeInfo? = null
+    private var systemUiSuppressingOverlay = false
     private var screenReceiverRegistered = false
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -64,17 +65,64 @@ class DictationAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || !prefs.serviceEnabled) return
+        val activeInput = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        val editorPackage = (if (isEditableNode(activeInput)) activeInput?.packageName else null)
+            ?.toString() ?: lastFocusedNode?.packageName?.toString()
+
+        // Autofill dropdowns and other transient system/app windows can appear while the
+        // underlying editor remains focused. Do not re-add our application overlay above them.
+        if (editorPackage != null && isCompetingWindow(event, editorPackage)) {
+            systemUiSuppressingOverlay = true
+            overlayManager.hideTemporarily()
+            return
+        }
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_FOCUSED,
             AccessibilityEvent.TYPE_VIEW_CLICKED -> {
-                handleFocusEvent(event.source)
+                val source = event.source
+                if (isEditableNode(source) && source?.packageName?.toString() == event.packageName?.toString()) {
+                    systemUiSuppressingOverlay = false
+                    handleFocusEvent(source)
+                } else if (systemUiSuppressingOverlay && !hasCompetingWindow(editorPackage)) {
+                    systemUiSuppressingOverlay = false
+                    handleFocusEvent(activeInput)
+                }
             }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
-                val inputNode = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-                handleFocusEvent(inputNode)
+                if (systemUiSuppressingOverlay) {
+                    if (hasCompetingWindow(editorPackage)) {
+                        overlayManager.hideTemporarily()
+                    } else {
+                        systemUiSuppressingOverlay = false
+                        handleFocusEvent(activeInput)
+                    }
+                } else {
+                    handleFocusEvent(activeInput)
+                }
             }
+        }
+    }
+
+    /** True when a non-IME window from another package has taken focus or changed window state. */
+    private fun isCompetingWindow(event: AccessibilityEvent, editorPackage: String): Boolean {
+        val eventPackage = event.packageName?.toString()
+        val eventWindow = windows.firstOrNull { it.id == event.windowId }
+        if (eventWindow?.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD) return false
+        if (eventPackage != null && eventPackage != editorPackage && eventPackage != packageName) {
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return true
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED && eventWindow != null) return true
+        }
+        return hasCompetingWindow(editorPackage)
+    }
+
+    private fun hasCompetingWindow(editorPackage: String?): Boolean {
+        if (editorPackage == null) return false
+        return windows.any { window ->
+            if (!window.isFocused || window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD) return@any false
+            val owner = runCatching { window.root?.packageName?.toString() }.getOrNull()
+            owner != null && owner != editorPackage && owner != packageName
         }
     }
 
@@ -82,6 +130,13 @@ class DictationAccessibilityService : AccessibilityService() {
         if (!prefs.serviceEnabled || !isScreenUsable()) {
             lastFocusedNode = null
             overlayManager.hide()
+        } else if (systemUiSuppressingOverlay) {
+            val editorPackage = lastFocusedNode?.packageName?.toString()
+            if (hasCompetingWindow(editorPackage)) overlayManager.hideTemporarily()
+            else {
+                systemUiSuppressingOverlay = false
+                handleFocusEvent(rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT))
+            }
         } else if (SpeechEngine.getInstance(this).isExternalSessionActive) {
             // Keep the status indicator visible during an externally owned session, even if
             // the external app's current window has no focused editable node.
