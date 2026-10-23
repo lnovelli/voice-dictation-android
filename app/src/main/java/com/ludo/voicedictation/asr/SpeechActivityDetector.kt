@@ -10,7 +10,8 @@ import java.security.MessageDigest
 internal data class SpeechActivityUpdate(
     val processedSamples: Int,
     val detected: Boolean,
-    val speechEnded: Boolean
+    val speechEnded: Boolean,
+    val speechSamples: Int = 0
 )
 
 /** Silero endpoint detection; VAD locates boundaries but never filters authoritative PCM. */
@@ -35,6 +36,7 @@ internal class SpeechActivityDetector(
     private val frame = FloatArray(WINDOW_SIZE)
     private var frameCount = 0
     private var processedSamples = 0
+    private var speechSamples = 0
     private var speechStartSample = 0
     private var speechStartCandidate = 0
     private var silenceStartSample = 0
@@ -87,7 +89,14 @@ internal class SpeechActivityDetector(
                         processedSamples - speechStartSample > TDT_MAX_SPEECH_SECONDS * SAMPLE_RATE
                     val threshold = if (adaptive) 0.9f else SPEECH_THRESHOLD
                     val minSilenceSamples = (SAMPLE_RATE * if (adaptive) 0.1f else MIN_SILENCE_SECONDS).toInt()
-                    updateSpeechState(vad.compute(frame), threshold, minSilenceSamples)
+                    val probability = vad.compute(frame)
+                    val state = updateSpeechState(probability, threshold, minSilenceSamples)
+                    // Conservative voiced duration: count only complete, positively classified
+                    // frames after speech is confirmed. Onset candidates, hysteresis-only frames
+                    // and the endpoint's silence hangover never contribute, even during a pause
+                    // too short to end the current speech interval.
+                    if (state && probability > threshold) speechSamples += WINDOW_SIZE
+                    state
                 } else {
                     vad.acceptWaveform(frame)
                     val state = vad.isSpeechDetected()
@@ -100,7 +109,8 @@ internal class SpeechActivityDetector(
                     updates += SpeechActivityUpdate(
                         processedSamples = processedSamples,
                         detected = detected,
-                        speechEnded = previousDetected && !detected
+                        speechEnded = previousDetected && !detected,
+                        speechSamples = speechSamples
                     )
                 }
                 frameCount = 0

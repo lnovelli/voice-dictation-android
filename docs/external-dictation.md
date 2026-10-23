@@ -8,7 +8,7 @@ no streaming, VAD, previews, 20-second partitions or concatenated per-window fin
 text. Since **1.2.3**, live microphone sessions run bundled Silero VAD; in that release
 it colors the floating speech-activity indicator without changing PCM, ASR or IPC.
 No IPC protocol change was made.
-The published v1.2.4 APK uses Silero speech-to-silence boundaries to queue exact contiguous PCM ranges for serialized live TDT v2/v3 decoding; Stop drains the remaining range and backlog, then polishes the assembled transcript once. Unified, completed-file and History paths are unchanged. There are no partial IPC events and no protocol change. At 120 seconds capture closes but waits for explicit STOP/CANCEL; some TDT chunks may already be decoded, while final assembly/polishing/delivery wait for STOP. Completed command-4 files decode directly without waiting. The total IPC deadline remains ten minutes. Vocabulary remains optional spelling-only; unsafe native acoustic bias stays disabled. See [live TDT chunking](live-tdt-vad-chunking.md) and [verification and limitations](record-then-transcribe-1.0.8.md).
+The published v1.2.5 APK raises the live capture cap to ten minutes and adds a brief sound/haptic cue when capture stops at the cap. For live TDT v2/v3, short speech intervals are accumulated across pauses; a chunk is released at a pause only after at least five seconds of VAD-classified speech. Stop drains the remaining range and backlog, then polishes the assembled transcript once. Unified, completed-file and History recognition paths are unchanged. There are no partial IPC events and no protocol change. At ten minutes capture closes but waits for explicit STOP/CANCEL; some TDT chunks may already be decoded, while final assembly/polishing/delivery wait for STOP. Completed command-4 files decode directly without waiting. The total IPC deadline is fifteen minutes to leave finalization time after a full-length recording. Completed command-4 files remain capped at 120 seconds. Vocabulary remains optional spelling-only; unsafe native acoustic bias stays disabled. See [live TDT chunking](live-tdt-vad-chunking.md) and [verification and limitations](record-then-transcribe-1.0.8.md).
 
 
 ## Setup and security
@@ -30,9 +30,9 @@ The published v1.2.4 APK uses Silero speech-to-silence boundaries to queue exact
   never trusted.
 - Enable **Enable dictation service** in Voice Dictation Settings and download the
   selected ASR model (encoder/decoder/joiner/tokens). Bundled Silero VAD initializes
-  automatically for live START: v1.2.4 uses its speech-to-silence endpoints for live
-  TDT chunking and its status for the visual indicator; Unified keeps the visual-only
-  behavior. Completed-file transcription does not initialize VAD. Live START additionally requires microphone
+  automatically for live START: v1.2.5 uses its speech-to-silence endpoints for live
+  TDT chunks only after five seconds of cumulative VAD-classified speech; Unified keeps
+  the visual-only behavior. Completed-file transcription does not initialize VAD. Live START additionally requires microphone
   runtime permission in both apps. File transcription requires **no microphone
   permission** in either phone app and never opens the phone microphone.
   Accessibility and overlay permissions are **not** required for either IPC path.
@@ -66,7 +66,7 @@ to the **same callback Messenger** for the session and put these values in `data
 
 | `Message.what` | Name | Behavior |
 | --- | --- | --- |
-| `1` | START | Claims exclusive ownership and begins bounded PCM capture. v1.2.4 may load/decode live TDT v2/v3 chunks after VAD pauses; v1.2.3 deferred TDT model loading until STOP. No PARTIAL events are emitted. |
+| `1` | START | Claims exclusive ownership and begins bounded PCM capture up to 10 minutes. v1.2.5 may load/decode live TDT v2/v3 chunks after eligible VAD pauses; v1.2.3 deferred TDT model loading until STOP. No PARTIAL events are emitted. |
 | `2` | STOP | Stops capture (or releases cap-wait), drains queued TDT ranges in order, joins the transcript and finalizes once. Unified flushes its existing online stream. v1.2.3 instead loads TDT and performs one full-recording decode. |
 | `3` | CANCEL | Stops capture and discards all pending transcription; no acknowledgement or final result. |
 | `4` | CMD_TRANSCRIBE_FILE | Claims exclusive ownership and transcribes a completed PCM file asynchronously; no START or STOP is needed. |
@@ -154,18 +154,18 @@ loading → processing → RESULT/ERROR. States may repeat; no mandatory idle ev
 `starting` means the session is accepted but the microphone is not yet recording;
 Stop/Cancel remains available. `recording` is sent only after AudioRecord reports
 active capture; startup failure is terminal ERROR. `recording_limit` means the microphone
-has been stopped/released and original bounded PCM is retained. In v1.2.4 some TDT chunks
+has been stopped/released and original bounded PCM is retained. In v1.2.5 some TDT chunks
 may already have been transcribed, but no final transcript has been assembled, polished
 or delivered. The v1.2.3 release did not run ASR at the cap.
 Clients must map both `recording` and `recording_limit` to their recording/Stop-ready
 state. Show a limit toast for `recording_limit`; keep Stop/Cancel available and do not
 auto-send STOP, submit a draft or start a processing deadline at the cap.
 Only after explicit STOP are `loading`/`processing` states emitted for live audio; in
-v1.2.4 TDT chunk inference may already be running invisibly during recording. These states
+v1.2.5 TDT chunk inference may already be running invisibly during recording. These states
 are busy finalization states, not a signal to start the microphone.
 File command 4 flows loading → processing → RESULT/ERROR immediately, without STOP (loading may repeat).
 Only RESULT may be submitted. Every successful PCM read, including pauses and short
-reads, is preserved in order up to **120 seconds** with no added padding.
+reads, is preserved in order up to **10 minutes** with no added padding.
 TDT chunk decode/range failure triggers a full-original-PCM retry; only a complete ordered
 transcript is eligible for RESULT. If that retry fails, the session emits ERROR rather than
 publishing partial chunk text. An empty final transcript is ERROR, not an empty RESULT. Accuracy is not guaranteed: Linux native
@@ -173,12 +173,12 @@ v3 probes returned empty text for short public speech followed by silence to 120
 despite recognizing the short clips normally. No vocabulary repetition returned on
 digital silence. This is not proof of Android microphone recognition quality.
 Failures of a running session terminate it; validation errors and busy rejections
-do not cancel the existing session. A maximum **ten minutes from accepted START
+do not cancel the existing session. A maximum **fifteen minutes from accepted START
 or CMD_TRANSCRIBE_FILE** applies to loading, recording and processing together.
 Timeout emits ERROR, stops capture and discards pending output.
 
 Clients should allow **five minutes after STOP** for authoritative final processing
-(or after command 4 for a completed file), while retaining the total ten-minute
+(or after command 4 for a completed file), while retaining the total fifteen-minute
 session bound including cap-wait. This is a recommended client deadline, not a
 performance guarantee; slower devices can still time out. Do not submit a draft on timeout. Genuine activity
 backgrounding, unbind and explicit cancellation must still cancel promptly.

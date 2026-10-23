@@ -32,8 +32,8 @@ class DictationControlService : Service() {
         const val ERROR = 104
         const val CONTROL_PERMISSION = "com.ludo.voicedictation.permission.CONTROL_DICTATION"
         private const val CLIENT_PACKAGE = "com.hermes.assistant"
-        // Includes model loading, up to 120 s of capture, and slower full-context decode.
-        private const val MAX_SESSION_MS = 10 * 60 * 1000L
+        // Allows 10 min of live capture plus up to 5 min for finalization/model loading.
+        private const val MAX_SESSION_MS = 15 * 60 * 1000L
         private const val TAG = "DictationControl"
     }
 
@@ -43,6 +43,7 @@ class DictationControlService : Service() {
         lateinit var timeout: Runnable
         var cancelled = false
         var linked = false
+        var limitCuePlayed = false
     }
 
     private val engine by lazy { SpeechEngine.getInstance(this) }
@@ -157,7 +158,7 @@ class DictationControlService : Service() {
         current.death = IBinder.DeathRecipient { handler.post { abort(current) } }
         current.timeout = Runnable {
             if (owner === current && !current.cancelled) {
-                emit(current, ERROR, "error", "Dictation exceeded the ten-minute session limit.")
+                emit(current, ERROR, "error", "Dictation exceeded the fifteen-minute session limit.")
                 abort(current)
             }
         }
@@ -170,7 +171,13 @@ class DictationControlService : Service() {
         owner = current
         handler.postDelayed(current.timeout, MAX_SESSION_MS)
         val listener = object : SpeechEngine.ExternalListener {
-            override fun onState(state: String) { emit(current, STATE, "state", state) }
+            override fun onState(state: String) {
+                if (state == "recording_limit" && !current.limitCuePlayed) {
+                    current.limitCuePlayed = true
+                    com.ludo.voicedictation.util.AutomaticStopCue.play(this@DictationControlService)
+                }
+                emit(current, STATE, "state", state)
+            }
             override fun onFinished(text: String?, error: String?) {
                 if (owner !== current) return
                 // Engine ownership and all async decode/capture work have already finished.

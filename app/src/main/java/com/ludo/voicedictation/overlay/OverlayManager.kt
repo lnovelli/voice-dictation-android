@@ -79,10 +79,10 @@ class OverlayManager(private val context: Context) {
             else updateOverlayVisuals(speechEngine.isRecording, speechEngine.isProcessing)
         }
         speechEngine.onRecordingLimit = {
-            val message = "120-second limit reached. Tap Stop to transcribe, or hold to discard."
+            val message = "10-minute limit reached. Tap Stop to transcribe, or hold to discard."
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
             overlayView?.announceForAccessibility(message)
-            overlayView?.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            com.ludo.voicedictation.util.AutomaticStopCue.play(context, overlayView)
         }
         speechEngine.onFinalResult = { text ->
             onFinalTranscriptionReady?.invoke(text)

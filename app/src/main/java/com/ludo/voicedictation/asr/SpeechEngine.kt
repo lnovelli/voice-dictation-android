@@ -29,13 +29,13 @@ class SpeechEngine private constructor(private val context: Context) {
     companion object {
         private const val TAG = "SpeechEngine"
         private const val SAMPLE_RATE = 16000
-        // 120 seconds of mono, signed 16-bit little-endian raw PCM. No WAV header.
-        private const val MAX_FILE_BYTES = 3_840_000L
+        private const val MAX_FILE_BYTES = 3_840_000L // Completed-file IPC input is limited to 120 seconds.
         private const val CAPTURE_READ_SAMPLES = 1024
         // Batch PCM into half-second queue items; size the queue for the full bounded capture.
         private const val STREAM_CHUNK_SAMPLES = SAMPLE_RATE / 2
-        private const val MAX_LIVE_SAMPLES = SAMPLE_RATE * 120
+        private const val MAX_LIVE_SAMPLES = SAMPLE_RATE * 600 // 10 minutes of mono PCM16 capture.
         private const val VAD_FRAME_SAMPLES = 512
+        private const val MIN_TDT_CHUNK_SPEECH_SAMPLES = SAMPLE_RATE * 5
         private const val RAW_PCM_QUEUE_CAPACITY = MAX_LIVE_SAMPLES / CAPTURE_READ_SAMPLES + 2
         private const val TDT_CHUNK_QUEUE_CAPACITY = MAX_LIVE_SAMPLES / VAD_FRAME_SAMPLES + 2
         private const val STOP_DRAIN_TIMEOUT_MS = 200L
@@ -680,7 +680,7 @@ class SpeechEngine private constructor(private val context: Context) {
             }
         }
 
-    /** Consumes contiguous raw PCM ranges, emits speech-to-silence chunks, and emits the tail once. */
+    /** Emit contiguous PCM at endpoints after 5 seconds of cumulative speech; flush the tail once. */
     private suspend fun segmentLiveTdtAudio(
         current: Session,
         pcmInput: Channel<CapturedPcmRange>,
@@ -689,6 +689,7 @@ class SpeechEngine private constructor(private val context: Context) {
         var detector: SpeechActivityDetector? = null
         var lastDetected = false
         var nextChunkStart = 0
+        var chunkSpeechStart = 0
         var expectedInputStart = 0
         var sequence = 0
         var recording: ShortArray? = null
@@ -741,7 +742,8 @@ class SpeechEngine private constructor(private val context: Context) {
                         lastDetected = update.detected
                         updateSpeechActivity(current, available = true, detected = update.detected)
                     }
-                    if (update.speechEnded && !current.cancelled) {
+                    if (update.speechEnded && !current.cancelled &&
+                        update.speechSamples - chunkSpeechStart >= MIN_TDT_CHUNK_SPEECH_SAMPLES) {
                         check(update.processedSamples in nextChunkStart..expectedInputStart)
                         if (update.processedSamples > nextChunkStart) {
                             tdtChunks.send(TdtPcmChunk(
@@ -751,6 +753,7 @@ class SpeechEngine private constructor(private val context: Context) {
                                 endExclusive = update.processedSamples
                             ))
                             nextChunkStart = update.processedSamples
+                            chunkSpeechStart = update.speechSamples
                         }
                     }
                 }
