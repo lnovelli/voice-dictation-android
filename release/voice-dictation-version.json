@@ -1,7 +1,7 @@
 {
-  "version_code": 27,
-  "version_name": "1.2.6",
-  "download_url": "https://github.com/lnovelli/voice-dictation-android/releases/download/v1.2.6/voice-dictation.apk",
-  "sha256": "31a72ca98b46fcfb35eceafa2384fd56f2d6f9d90d120155a973b4ad69d9b678",
-  "release_notes": "v1.2.6: Prevents the floating dictation button from competing with Autofill/system windows. The overlay is temporarily hidden without cancelling a live dictation session, then restored when focus returns to the editor. ARM64-only; updates remain manual. Autofill behavior has not been device-validated."
+  "version_code": 28,
+  "version_name": "1.2.7",
+  "download_url": "https://github.com/lnovelli/voice-dictation-android/releases/download/v1.2.7/voice-dictation.apk",
+  "sha256": "c5f10ab09945e0caf586b6138b15116540d05c4f735f7a7c7f706fb44ee5c702",
+  "release_notes": "v1.2.7: Removes any leading LLM thinking text through its closing </think> tag from polished output, including responses where the opening tag is missing. Responses without the closing tag are left unchanged. ARM64-only; updates remain manual."
 }

@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.2.6 (build 27; ARM64-only)
+## Current release: v1.2.7 (build 28; ARM64-only)
 
-Prevents the floating dictation button from reappearing over competing Autofill/system windows. Temporarily hiding the button no longer cancels a live dictation session; the overlay returns when focus is back in the editor.
+Removes any leading LLM thinking text through its closing `</think>` tag from polished output, including responses where the opening tag is missing. Responses without the closing tag are left unchanged.
 
 See [live TDT chunking, safeguards, and limitations](docs/live-tdt-vad-chunking.md).
 
