@@ -63,6 +63,7 @@ class OverlayManager(private val context: Context) {
     }
 
     var onFinalTranscriptionReady: ((String) -> Unit)? = null
+    var onLocalDictationStarted: (() -> Unit)? = null
     var onSessionIdle: (() -> Unit)? = null
 
     init {
@@ -408,6 +409,7 @@ class OverlayManager(private val context: Context) {
             overlayView?.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
             overlayView?.announceForAccessibility("Recording stopped. Transcribing.")
         } else if (speechEngine.startRecording()) {
+            onLocalDictationStarted?.invoke()
             overlayView?.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
             overlayView?.announceForAccessibility("Starting recording. Tap to stop and transcribe. Hold to discard.")
         }
@@ -508,6 +510,7 @@ class OverlayManager(private val context: Context) {
         if (overlayView != null) context.unregisterComponentCallbacks(configurationCallbacks)
         speechEngine.cancelRecording()
         onFinalTranscriptionReady = null
+        onLocalDictationStarted = null
         onSessionIdle = null
         overlayView?.keepScreenOn = false
         pulseAnimator?.cancel()

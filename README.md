@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.2.7 (build 28; ARM64-only)
+## Current release: v1.2.8 (build 29; ARM64-only)
 
-Removes any leading LLM thinking text through its closing `</think>` tag from polished output, including responses where the opening tag is missing. Responses without the closing tag are left unchanged.
+Adds settings to toggle autofill overlay collision suppression and to copy dictated text to the clipboard with a brief toast when the field focused at recording start loses focus.
 
 See [live TDT chunking, safeguards, and limitations](docs/live-tdt-vad-chunking.md).
 
@@ -25,6 +25,7 @@ See [live TDT chunking, safeguards, and limitations](docs/live-tdt-vad-chunking.
   - Draggable partly beyond any screen edge, with independent saved positions for portrait and landscape; an unset position starts vertically centered at the right edge.
   - Adjustable floating icon size (50–150%) and opacity, applied immediately from Settings.
   - Hides automatically when focus moves away from text fields.
+  - Settings can disable autofill/competing-window collision suppression. Dictation can also be set to copy to the clipboard with a brief toast if the field focused at recording start is no longer focused when transcription finishes.
 - **Speech-activity indicator and live TDT chunking (1.2.4):** Bundles the 212,860-byte Silero 16 kHz INT8 model. During live microphone recording, the floating button keeps its breathing animation but is gray when the VAD reports no speech and red when it detects speech. TDT uses VAD endpoints to queue exact PCM ranges without trimming or filtering the original audio. If VAD is unavailable, recording continues and the remaining TDT audio is decoded unsplit.
 - **Model-specific capture and recognition (1.2.1):**
   - **TDT v2/v3:** A separate Silero worker accumulates at least 5 seconds of VAD-classified speech across short pauses before releasing a chunk at a later pause. One serialized offline TDT worker decodes chunks in order. Stop drains the open tail and backlog, assembles text in range order, then runs the single final text-polishing step. All captured PCM remains authoritative; queues retain the full 10-minute capture if decoding falls behind. The optional acoustic vocabulary setting applies only to TDT.

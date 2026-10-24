@@ -58,6 +58,11 @@
     <string name="overlay_scale_title">Floating icon size</string>
     <string name="overlay_scale_label">Floating icon size: %1$d%%</string>
     <string name="overlay_scale_hint">50–150% of the original size. Changes apply immediately. Drag partly beyond any screen edge; a small part stays reachable.</string>
+    <string name="avoid_autofill_collision_title">Avoid autofill overlay collisions</string>
+    <string name="avoid_autofill_collision_hint">Temporarily hide the floating button when an autofill popup or another app/system window is over the focused text field.</string>
+    <string name="copy_on_focus_change_title">Copy on focus change</string>
+    <string name="copy_on_focus_change_hint">When enabled, dictation is inserted only into the field focused when recording started. If focus changes, the text is copied to the clipboard and a short toast appears. Turn off to insert into the currently focused field instead.</string>
+    <string name="dictation_copied_focus_changed">Focus changed — dictation copied to clipboard</string>
     <string name="vocabulary_spelling_label">Use custom vocabulary spelling</string>
     <string name="vocabulary_spelling_hint">Post-transcript spelling only: recases or joins/splits spaces when the recognized letters already match. Independent of the experimental acoustic hotword switch in the Vocabulary tab; these hints cannot correct sound-alike recognition.</string>
     <string name="acoustic_vocabulary_title">Acoustic Custom-Word Decoding (Experimental)</string>

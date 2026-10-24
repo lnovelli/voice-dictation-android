@@ -77,6 +77,7 @@ class SettingsFragment : Fragment() {
         setupModelSelection()
         setupPermissions()
         setupSliders()
+        setupFocusAndOverlayBehavior()
         setupTranscriptRemoval()
         setupAppUpdates()
     }
@@ -314,6 +315,19 @@ class SettingsFragment : Fragment() {
             prefs.transcriptRemovalWords = AppPreferences.DEFAULT_TRANSCRIPT_REMOVALS
             binding.etTranscriptRemovals.setText(prefs.transcriptRemovalWords.joinToString("\n"))
             binding.layoutTranscriptRemovals.error = null
+        }
+    }
+
+    private fun setupFocusAndOverlayBehavior() {
+        binding.switchAvoidAutofillCollision.isChecked = prefs.avoidAutofillOverlayCollisions
+        binding.switchAvoidAutofillCollision.setOnCheckedChangeListener { _, enabled ->
+            prefs.avoidAutofillOverlayCollisions = enabled
+            DictationAccessibilityService.instance?.refreshServiceState()
+        }
+
+        binding.switchCopyOnFocusChange.isChecked = prefs.copyOnFocusChange
+        binding.switchCopyOnFocusChange.setOnCheckedChangeListener { _, enabled ->
+            prefs.copyOnFocusChange = enabled
         }
     }
 

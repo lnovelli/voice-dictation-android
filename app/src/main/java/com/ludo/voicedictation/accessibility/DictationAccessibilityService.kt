@@ -11,9 +11,11 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.os.Bundle
 import android.util.Log
+import android.widget.Toast
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.content.ContextCompat
+import com.ludo.voicedictation.R
 import com.ludo.voicedictation.asr.SpeechEngine
 import com.ludo.voicedictation.overlay.OverlayManager
 import com.ludo.voicedictation.data.AppPreferences
@@ -33,12 +35,14 @@ class DictationAccessibilityService : AccessibilityService() {
     private lateinit var overlayManager: OverlayManager
     private val prefs by lazy { AppPreferences(this) }
     private var lastFocusedNode: AccessibilityNodeInfo? = null
+    private var sessionTargetNode: AccessibilityNodeInfo? = null
     private var systemUiSuppressingOverlay = false
     private var screenReceiverRegistered = false
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == Intent.ACTION_SCREEN_OFF) {
                 lastFocusedNode = null
+                sessionTargetNode = null
                 overlayManager.hide() // Explicit safety cancellation, not a focus transition.
             }
         }
@@ -52,10 +56,14 @@ class DictationAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         overlayManager = OverlayManager.getInstance(this)
+        overlayManager.onLocalDictationStarted = { captureInsertionTarget() }
         overlayManager.onFinalTranscriptionReady = { text ->
             insertText(text)
         }
-        overlayManager.onSessionIdle = { refreshServiceState() }
+        overlayManager.onSessionIdle = {
+            sessionTargetNode = null
+            refreshServiceState()
+        }
         ContextCompat.registerReceiver(this, screenReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF),
             ContextCompat.RECEIVER_NOT_EXPORTED)
         screenReceiverRegistered = true
@@ -65,13 +73,15 @@ class DictationAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || !prefs.serviceEnabled) return
+        if (!prefs.avoidAutofillOverlayCollisions) systemUiSuppressingOverlay = false
         val activeInput = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         val editorPackage = (if (isEditableNode(activeInput)) activeInput?.packageName else null)
             ?.toString() ?: lastFocusedNode?.packageName?.toString()
 
         // Autofill dropdowns and other transient system/app windows can appear while the
         // underlying editor remains focused. Do not re-add our application overlay above them.
-        if (editorPackage != null && isCompetingWindow(event, editorPackage)) {
+        if (prefs.avoidAutofillOverlayCollisions && editorPackage != null &&
+            isCompetingWindow(event, editorPackage)) {
             systemUiSuppressingOverlay = true
             overlayManager.hideTemporarily()
             return
@@ -127,9 +137,16 @@ class DictationAccessibilityService : AccessibilityService() {
     }
 
     fun refreshServiceState() {
+        if (!prefs.avoidAutofillOverlayCollisions) systemUiSuppressingOverlay = false
         if (!prefs.serviceEnabled || !isScreenUsable()) {
             lastFocusedNode = null
             overlayManager.hide()
+        } else if (prefs.avoidAutofillOverlayCollisions &&
+            (rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                ?.takeIf(::isEditableNode)?.packageName?.toString()
+                ?: lastFocusedNode?.packageName?.toString())?.let(::hasCompetingWindow) == true) {
+            systemUiSuppressingOverlay = true
+            overlayManager.hideTemporarily()
         } else if (systemUiSuppressingOverlay) {
             val editorPackage = lastFocusedNode?.packageName?.toString()
             if (hasCompetingWindow(editorPackage)) overlayManager.hideTemporarily()
@@ -183,13 +200,34 @@ class DictationAccessibilityService : AccessibilityService() {
                 className.contains("SearchView", ignoreCase = true)
     }
 
+    private fun captureInsertionTarget() {
+        sessionTargetNode = null
+        val active = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        val target = active?.takeIf { it.isFocused && isEditableNode(it) }
+            ?: lastFocusedNode?.takeIf { it.isFocused && isEditableNode(it) }
+        sessionTargetNode = target?.let { AccessibilityNodeInfo.obtain(it) }
+    }
+
     fun insertText(text: String) {
-        if (!prefs.serviceEnabled || !isScreenUsable()) return
-        val focusedNode = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-        val targetNode = focusedNode ?: lastFocusedNode
+        if (!prefs.serviceEnabled || !isScreenUsable()) {
+            sessionTargetNode = null
+            return
+        }
+        val requireOriginalFocus = prefs.copyOnFocusChange
+        val targetNode = if (requireOriginalFocus) sessionTargetNode else {
+            rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: lastFocusedNode
+        }
+        if (requireOriginalFocus && (targetNode == null || !isOriginalTargetFocused(targetNode))) {
+            if (copyToClipboard(text)) {
+                Toast.makeText(this, R.string.dictation_copied_focus_changed, Toast.LENGTH_SHORT).show()
+            }
+            sessionTargetNode = null
+            return
+        }
         if (targetNode == null) {
             Log.w(TAG, "No focused text field available to insert dictation")
             copyToClipboard(text)
+            sessionTargetNode = null
             return
         }
 
@@ -239,7 +277,17 @@ class DictationAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to insert text: ${e.message}", e)
             copyToClipboard(text)
+        } finally {
+            sessionTargetNode = null
         }
+    }
+
+    private fun isOriginalTargetFocused(target: AccessibilityNodeInfo): Boolean {
+        if (!target.refresh() || !target.isFocused || !isEditableNode(target)) return false
+        val root = rootInActiveWindow ?: return false
+        if (root.windowId != target.windowId) return false
+        val active = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
+        return active.isFocused && isEditableNode(active) && active == target
     }
 
     private fun copyToClipboard(text: String): Boolean {
@@ -257,6 +305,7 @@ class DictationAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {
         Log.w(TAG, "DictationAccessibilityService interrupted")
         lastFocusedNode = null
+        sessionTargetNode = null
         if (::overlayManager.isInitialized) overlayManager.hide()
     }
 
@@ -267,6 +316,7 @@ class DictationAccessibilityService : AccessibilityService() {
             screenReceiverRegistered = false
         }
         if (::overlayManager.isInitialized) overlayManager.destroy()
+        sessionTargetNode = null
         instance = null
         Log.i(TAG, "DictationAccessibilityService destroyed")
     }
