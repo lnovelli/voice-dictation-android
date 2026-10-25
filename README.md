@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.2.9 (build 30; ARM64-only)
+## Current release: v1.2.10 (build 31; ARM64-only)
 
-Adds optional English number-word-to-digit corrections, a configurable minimum-word threshold and nearby-number auto-polishing for AI polishing, and fixes History reprocessing to replace the selected transcript without adding a duplicate.
+Adds below-threshold AI polishing for whole-word “one” when enabled, so the model can decide from context; static number conversion leaves standalone “one” unchanged. Local dictation now copies results to the clipboard rather than inserting into a new field if focus changes.
 
 See [live TDT chunking, safeguards, and limitations](docs/live-tdt-vad-chunking.md).
 

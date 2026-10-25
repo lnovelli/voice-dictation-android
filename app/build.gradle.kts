@@ -11,8 +11,8 @@ android {
         applicationId = "com.ludo.voicedictation"
         minSdk = 26
         targetSdk = 34
-        versionCode = 30
-        versionName = "1.2.9"
+        versionCode = 31
+        versionName = "1.2.10"
 
         ndk {
             abiFilters.add("arm64-v8a")
