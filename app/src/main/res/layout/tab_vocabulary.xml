@@ -76,6 +76,68 @@
         </LinearLayout>
     </LinearLayout>
 
+    <!-- Final transcript formatting and polishing gates. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/bg_card"
+        android:padding="16dp"
+        android:layout_marginBottom="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/transcript_formatting_title"
+            android:textColor="@color/text_primary"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="6dp" />
+
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/switchStaticNumericCorrections"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/static_numeric_corrections_toggle"
+            android:textColor="@color/text_primary" />
+
+        <TextView
+            android:id="@+id/tvPolishingMinimumWords"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp"
+            android:layout_marginTop="8dp" />
+
+        <com.google.android.material.slider.Slider
+            android:id="@+id/sliderPolishingMinimumWords"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:valueFrom="0"
+            android:valueTo="20"
+            android:stepSize="1"
+            android:value="10"
+            android:contentDescription="@string/polishing_minimum_words_label"
+            app:thumbColor="@color/accent"
+            app:trackColorActive="@color/accent"
+            app:trackColorInactive="@color/surface_variant_dark" />
+
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/switchPolishingAutoNumberSequences"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/polishing_auto_number_sequences_toggle"
+            android:textColor="@color/text_primary" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/polishing_auto_number_sequences_hint"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:lineSpacingExtra="2dp" />
+    </LinearLayout>
+
     <!-- Experimental acoustic context controls; disabled by default. -->
     <LinearLayout
         android:layout_width="match_parent"

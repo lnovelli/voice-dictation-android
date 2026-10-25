@@ -87,6 +87,12 @@
     <string name="add_word_hint">Enter word or phrase</string>
     <string name="btn_add">Add</string>
     <string name="empty_vocabulary">No custom terms yet. Add terms above to use as spelling hints or experimental acoustic hotwords.</string>
+    <string name="transcript_formatting_title">Transcript Formatting and Polishing</string>
+    <string name="static_numeric_corrections_toggle">Convert English number words to digits</string>
+    <string name="polishing_minimum_words_label">Minimum words for AI polishing</string>
+    <string name="polishing_minimum_words_value">Minimum words before AI polishing: %1$d</string>
+    <string name="polishing_auto_number_sequences_toggle">Auto-polish nearby number sequences</string>
+    <string name="polishing_auto_number_sequences_hint">Below the minimum only: polish when two or more numbers occur with no more than two words between them, such as “4 30 pm” or “16 oh five”. Spelled-out numbers do not bypass the minimum-word threshold.</string>
 
     <string name="string_replacement_title">Custom String Replacements</string>
     <string name="string_replacement_hint">Map common transcription variants to the intended text. Each rule can have several input alternatives, one per line. Matching is case-insensitive and respects whole words and phrases; replacements apply to final transcripts.</string>

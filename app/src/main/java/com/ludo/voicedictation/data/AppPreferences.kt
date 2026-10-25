@@ -46,6 +46,9 @@ class AppPreferences(context: Context) {
         private const val KEY_TRANSCRIPT_POLISHING_ENDPOINT = "transcript_polishing_endpoint"
         private const val KEY_TRANSCRIPT_POLISHING_MODEL = "transcript_polishing_model"
         private const val KEY_TRANSCRIPT_POLISHING_SYSTEM_PROMPT = "transcript_polishing_system_prompt"
+        private const val KEY_STATIC_NUMERIC_CORRECTIONS = "static_numeric_corrections_enabled"
+        private const val KEY_POLISHING_MINIMUM_WORDS = "polishing_minimum_words"
+        private const val KEY_POLISHING_AUTO_NUMBER_SEQUENCES = "polishing_auto_number_sequences"
         private const val MAX_TRANSCRIPT_POLISHING_SYSTEM_PROMPT_CHARACTERS = 12_000
         const val DEFAULT_TRANSCRIPT_POLISHING_ENDPOINT = "http://127.0.0.1:11434"
         const val DEFAULT_TRANSCRIPT_POLISHING_MODEL = "default"
@@ -59,6 +62,18 @@ class AppPreferences(context: Context) {
     var transcriptPolishingEnabled: Boolean
         get() = prefs.getBoolean(KEY_TRANSCRIPT_POLISHING_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_TRANSCRIPT_POLISHING_ENABLED, value).apply()
+
+    var staticNumericCorrectionsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_STATIC_NUMERIC_CORRECTIONS, false)
+        set(value) = prefs.edit().putBoolean(KEY_STATIC_NUMERIC_CORRECTIONS, value).apply()
+
+    var transcriptPolishingMinimumWords: Int
+        get() = prefs.getInt(KEY_POLISHING_MINIMUM_WORDS, 10).coerceIn(0, 20)
+        set(value) = prefs.edit().putInt(KEY_POLISHING_MINIMUM_WORDS, value.coerceIn(0, 20)).apply()
+
+    var transcriptPolishingAutoNumberSequences: Boolean
+        get() = prefs.getBoolean(KEY_POLISHING_AUTO_NUMBER_SEQUENCES, false)
+        set(value) = prefs.edit().putBoolean(KEY_POLISHING_AUTO_NUMBER_SEQUENCES, value).apply()
 
     var transcriptPolishingEndpoint: String
         get() = prefs.getString(KEY_TRANSCRIPT_POLISHING_ENDPOINT, DEFAULT_TRANSCRIPT_POLISHING_ENDPOINT)

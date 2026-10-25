@@ -71,6 +71,8 @@ class SpeechEngine private constructor(private val context: Context) {
         var historyAudioFileName: String? = null
         var finalTextSettingsCaptured = false
         var finalPolishingEnabled = false
+        var finalPolishingMinimumWords: Int? = null
+        var finalPolishingAutoNumberSequences: Boolean? = null
         var finalPolishingConfiguration: TranscriptPolishingConfiguration? = null
         var acousticDecoderSettings: AcousticDecoderSettings? = null
         @Volatile var stopDrainTimeout: Runnable? = null
@@ -127,6 +129,7 @@ class SpeechEngine private constructor(private val context: Context) {
     private var spellingHints = RecognitionPolicy.SpellingHints(emptySet())
     private var transcriptFilter = TranscriptFilter(emptyList())
     private var stringReplacer = CustomStringReplacer(emptyList())
+    private var staticNumericCorrector: StaticNumericCorrector? = null
     private var recorder: AudioRecord? = null
     private var session: Session? = null
     private var sessionJob: Job? = null
@@ -257,6 +260,16 @@ class SpeechEngine private constructor(private val context: Context) {
                     }
                     val originalText = current.text.orEmpty()
                     if (!current.cancelled && prefs.serviceEnabled && originalText.isNotBlank()) {
+                        val preNumericText = stringReplacer.apply(spellingHints.apply(originalText))
+                        val thresholdText = transcriptFilter.apply(preNumericText)
+                        val correctedText = applyTranscriptTransforms(originalText)
+                        val minimumWords = current.finalPolishingMinimumWords
+                            ?: prefs.transcriptPolishingMinimumWords
+                        val autoNumberSequences = current.finalPolishingAutoNumberSequences
+                            ?: prefs.transcriptPolishingAutoNumberSequences
+                        val polishingThresholdMet = countTranscriptWords(thresholdText) >= minimumWords
+                        val numberSequenceDetected = autoNumberSequences && !polishingThresholdMet &&
+                            StaticNumericCorrector.containsNearbyNumbers(thresholdText)
                         val polishingEnabled = if (current.finalTextSettingsCaptured) {
                             current.finalPolishingEnabled
                         } else {
@@ -274,7 +287,8 @@ class SpeechEngine private constructor(private val context: Context) {
                             } else null
                         val polishingAllowed = polishingEnabled &&
                             (current.historyAudioInputFileName == null || current.historyPolishingConfiguration != null)
-                        if (!current.cancelled && polishingAllowed && polishingConfiguration != null) {
+                        val shouldPolish = polishingThresholdMet || numberSequenceDetected
+                        if (!current.cancelled && polishingAllowed && shouldPolish && polishingConfiguration != null) {
                             setState(false, true, "polishing")
                             val polishedText = transcriptPolisher.polish(
                                 baseUrl = polishingConfiguration.baseUrl,
@@ -290,13 +304,10 @@ class SpeechEngine private constructor(private val context: Context) {
                                 prefs.transcriptPolishingEnabled
                             }
                             current.text = if (!current.cancelled && stillEnabled) {
-                                polishedText ?: originalText
-                            } else originalText
-                        }
-                        if (!current.cancelled && prefs.serviceEnabled) {
-                            current.text = transcriptFilter.apply(
-                                stringReplacer.apply(spellingHints.apply(current.text.orEmpty()))
-                            )
+                                applyTranscriptTransforms(polishedText ?: originalText)
+                            } else correctedText
+                        } else {
+                            current.text = correctedText
                         }
                         if (!current.cancelled && prefs.serviceEnabled && !current.text.isNullOrBlank() &&
                             current.historyAudioInputFileName == null) {
@@ -350,7 +361,11 @@ class SpeechEngine private constructor(private val context: Context) {
                         else -> null
                     }
                     if (error == null && text != null) {
-                        prefs.addHistoryItem(text, current.historyAudioFileName)
+                        // History reprocessing replaces the selected row through its listener;
+                        // it must not also create a fresh entry here.
+                        if (current.historyAudioInputFileName == null) {
+                            prefs.addHistoryItem(text, current.historyAudioFileName)
+                        }
                         if (current.listener != null) current.listener.onFinished(text, null)
                         else onFinalResult?.invoke(text)
                     } else {
@@ -504,7 +519,20 @@ class SpeechEngine private constructor(private val context: Context) {
             if (prefs.transcriptRemovalEnabled) prefs.transcriptRemovalWords else emptyList()
         )
         stringReplacer = CustomStringReplacer(prefs.getStringReplacementRules())
+        staticNumericCorrector = if (prefs.staticNumericCorrectionsEnabled) StaticNumericCorrector() else null
     }
+
+    private fun applyTranscriptTransforms(text: String): String {
+        val spellingCorrected = spellingHints.apply(text)
+        val replaced = stringReplacer.apply(spellingCorrected)
+        val numericallyCorrected = staticNumericCorrector?.apply(replaced) ?: replaced
+        return transcriptFilter.apply(numericallyCorrected)
+    }
+
+    private fun countTranscriptWords(text: String): Int =
+        Regex("[\\p{L}\\p{M}\\p{N}]+(?:['’][\\p{L}\\p{M}\\p{N}]+)*")
+            .findAll(text)
+            .count()
 
     private fun snapshotAcousticDecoderSettings() = AcousticDecoderSettings(
         vocabulary = prefs.getVocabulary().toSet(),
@@ -517,6 +545,8 @@ class SpeechEngine private constructor(private val context: Context) {
     private fun snapshotFinalizationSettings(current: Session) {
         snapshotTranscriptTransforms()
         current.finalPolishingEnabled = prefs.transcriptPolishingEnabled
+        current.finalPolishingMinimumWords = prefs.transcriptPolishingMinimumWords
+        current.finalPolishingAutoNumberSequences = prefs.transcriptPolishingAutoNumberSequences
         current.finalPolishingConfiguration = if (current.finalPolishingEnabled) {
             TranscriptPolishingConfiguration(
                 baseUrl = prefs.transcriptPolishingEndpoint,
@@ -1100,11 +1130,9 @@ class SpeechEngine private constructor(private val context: Context) {
         val model = ModelInfo.getModelById(current.modelId)
         val liveTdt = current.modelId == AppPreferences.MODEL_PARAKEET_V2 ||
             current.modelId == AppPreferences.MODEL_PARAKEET_V3
-        if (!current.cancelled && model.streaming) {
-            // Preserve Unified's existing Stop-time spelling/filler snapshot behavior.
-            snapshotTranscriptTransforms()
-        } else if (!current.cancelled && liveTdt && !current.finalTextSettingsCaptured) {
-            // Freeze TDT final-text behavior at Stop while its ordered chunk queue drains.
+        if (!current.cancelled && (model.streaming || liveTdt) && !current.finalTextSettingsCaptured) {
+            // Freeze all final-text transforms and polishing gates at explicit Stop while the
+            // live recognizer/chunk queue drains.
             snapshotFinalizationSettings(current)
         }
         current.stopped = true

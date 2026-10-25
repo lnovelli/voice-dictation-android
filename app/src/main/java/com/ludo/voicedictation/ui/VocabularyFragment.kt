@@ -50,6 +50,7 @@ class VocabularyFragment : Fragment() {
         setupAddWord()
         setupClearAll()
         setupAcousticControls()
+        setupTranscriptFormattingControls()
         setupStringReplacements()
         refreshList()
     }
@@ -89,6 +90,31 @@ class VocabularyFragment : Fragment() {
             updateLabels()
         }
 
+    }
+
+    private fun setupTranscriptFormattingControls() {
+        binding.switchStaticNumericCorrections.isChecked = prefs.staticNumericCorrectionsEnabled
+        binding.sliderPolishingMinimumWords.value = prefs.transcriptPolishingMinimumWords.toFloat()
+        binding.switchPolishingAutoNumberSequences.isChecked = prefs.transcriptPolishingAutoNumberSequences
+        updatePolishingMinimumWordsLabel()
+
+        binding.switchStaticNumericCorrections.setOnCheckedChangeListener { _, enabled ->
+            prefs.staticNumericCorrectionsEnabled = enabled
+        }
+        binding.sliderPolishingMinimumWords.addOnChangeListener { _, value, fromUser ->
+            if (fromUser) prefs.transcriptPolishingMinimumWords = value.toInt()
+            updatePolishingMinimumWordsLabel()
+        }
+        binding.switchPolishingAutoNumberSequences.setOnCheckedChangeListener { _, enabled ->
+            prefs.transcriptPolishingAutoNumberSequences = enabled
+        }
+    }
+
+    private fun updatePolishingMinimumWordsLabel() {
+        binding.tvPolishingMinimumWords.text = getString(
+            R.string.polishing_minimum_words_value,
+            binding.sliderPolishingMinimumWords.value.toInt()
+        )
     }
 
     private fun updateAcousticControlsForModel() {

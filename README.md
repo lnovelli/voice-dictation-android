@@ -41,6 +41,9 @@ See [live TDT chunking, safeguards, and limitations](docs/live-tdt-vad-chunking.
   - Acoustic bias is not accuracy-safe: the pinned native decoder can reward completed terms on multiple paths, causing repetitions or changing/omitting unrelated speech. Keep disabled unless testing, and review all output; see [current controls and limitations](docs/acoustic-vocabulary-1.1.1.md) and [prior native probe details](docs/acoustic-vocabulary-1.1.0.md).
 - **Custom String Replacements:**
   - In the Vocabulary tab, map multiple literal transcription variants to one output phrase. Matching is case-insensitive and respects whole-word/phrase boundaries; replacements are applied automatically to final transcripts and remain independent of acoustic word boosting.
+- **Transcript formatting and polishing gates:**
+  - Vocabulary settings can convert common English cardinal number phrases to digits (off by default), set the AI-polishing minimum to 0–20 words (default 10), and optionally polish short transcripts containing nearby number sequences such as “4 30 pm” or “16 oh five”.
+  - The word-count threshold (0–20, default 10) is evaluated before number-word conversion; a spelled-out number alone does not bypass it. When enabled, nearby-number auto-polishing can bypass the threshold for short sequences such as “4 30 pm” or “16 oh five”.
 - **Optional AI Transcript Polishing:**
   - The Polish tab configures and tests an OpenAI-compatible chat-completions endpoint and model. Defaults are `http://127.0.0.1:11434` and `default`; the master switch is off until explicitly enabled.
   - Sends your saved system prompt, final transcript and custom vocabulary as text, never audio. HTTP is restricted to `127.0.0.1`/`localhost`; external hosts require HTTPS. A bounded timeout, response-size limit, and no-redirect policy apply.
