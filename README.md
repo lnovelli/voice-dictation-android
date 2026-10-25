@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.2.8 (build 29; ARM64-only)
+## Current release: v1.2.9 (build 30; ARM64-only)
 
-Adds settings to toggle autofill overlay collision suppression and to copy dictated text to the clipboard with a brief toast when the field focused at recording start loses focus.
+Adds optional English number-word-to-digit corrections, a configurable minimum-word threshold and nearby-number auto-polishing for AI polishing, and fixes History reprocessing to replace the selected transcript without adding a duplicate.
 
 See [live TDT chunking, safeguards, and limitations](docs/live-tdt-vad-chunking.md).
 
