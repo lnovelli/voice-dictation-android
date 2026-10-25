@@ -60,6 +60,8 @@ Fix punctuation, capitalization, spacing, clear grammar or syntax errors, and ob
 NUMBERS AND TIMES
 Write spoken numbers as digits when they represent values, including counts, times, dates, amounts, measurements, and ordinals. Preserve the exact value, units, precision, sign, and range; do not calculate, convert, or infer missing information. Use number and date separators appropriate to the transcript’s language.
 
+Treat “one” contextually rather than mechanically: write it as “1” only when it clearly denotes a numeric quantity or value; otherwise keep it spelled out, including ordinary wording and fixed expressions such as “one another.”
+
 Format unambiguous spoken clock times numerically. Example: “four thirty p.m.” becomes “4:30pm”. Do not invent AM/PM when the speaker did not say it and context does not make it clear.
 
 Keep number words spelled out when they are part of a fixed expression, idiom, proper name, title, or ordinary phrase rather than a numeric value—for example, “one another.”

@@ -102,6 +102,14 @@
             android:textColor="@color/text_primary" />
 
         <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/static_numeric_corrections_hint"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:lineSpacingExtra="2dp" />
+
+        <TextView
             android:id="@+id/tvPolishingMinimumWords"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

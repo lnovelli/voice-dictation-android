@@ -268,8 +268,9 @@ class SpeechEngine private constructor(private val context: Context) {
                         val autoNumberSequences = current.finalPolishingAutoNumberSequences
                             ?: prefs.transcriptPolishingAutoNumberSequences
                         val polishingThresholdMet = countTranscriptWords(thresholdText) >= minimumWords
-                        val numberSequenceDetected = autoNumberSequences && !polishingThresholdMet &&
-                            StaticNumericCorrector.containsNearbyNumbers(thresholdText)
+                        val autoNumberPolishTriggered = autoNumberSequences && !polishingThresholdMet &&
+                            (StaticNumericCorrector.containsNearbyNumbers(thresholdText) ||
+                                StaticNumericCorrector.containsAmbiguousOne(thresholdText))
                         val polishingEnabled = if (current.finalTextSettingsCaptured) {
                             current.finalPolishingEnabled
                         } else {
@@ -287,7 +288,7 @@ class SpeechEngine private constructor(private val context: Context) {
                             } else null
                         val polishingAllowed = polishingEnabled &&
                             (current.historyAudioInputFileName == null || current.historyPolishingConfiguration != null)
-                        val shouldPolish = polishingThresholdMet || numberSequenceDetected
+                        val shouldPolish = polishingThresholdMet || autoNumberPolishTriggered
                         if (!current.cancelled && polishingAllowed && shouldPolish && polishingConfiguration != null) {
                             setState(false, true, "polishing")
                             val polishedText = transcriptPolisher.polish(

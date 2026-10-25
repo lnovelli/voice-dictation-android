@@ -203,8 +203,9 @@ class DictationAccessibilityService : AccessibilityService() {
     private fun captureInsertionTarget() {
         sessionTargetNode = null
         val active = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        // Only the actual input-focused node is a valid insertion target. A remembered node
+        // can be stale after focus moves, so an absent active editor means clipboard delivery.
         val target = active?.takeIf { it.isFocused && isEditableNode(it) }
-            ?: lastFocusedNode?.takeIf { it.isFocused && isEditableNode(it) }
         sessionTargetNode = target?.let { AccessibilityNodeInfo.obtain(it) }
     }
 
@@ -213,31 +214,18 @@ class DictationAccessibilityService : AccessibilityService() {
             sessionTargetNode = null
             return
         }
-        val requireOriginalFocus = prefs.copyOnFocusChange
-        val targetNode = if (requireOriginalFocus) sessionTargetNode else {
-            rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: lastFocusedNode
-        }
-        if (requireOriginalFocus && (targetNode == null || !isOriginalTargetFocused(targetNode))) {
-            if (copyToClipboard(text)) {
-                Toast.makeText(this, R.string.dictation_copied_focus_changed, Toast.LENGTH_SHORT).show()
-            }
-            sessionTargetNode = null
-            return
-        }
-        if (targetNode == null) {
-            Log.w(TAG, "No focused text field available to insert dictation")
-            copyToClipboard(text)
+        val targetNode = sessionTargetNode
+        if (targetNode == null || !isOriginalTargetFocused(targetNode)) {
+            if (copyToClipboard(text)) showCopiedToast()
             sessionTargetNode = null
             return
         }
 
         try {
-            check(targetNode.refresh()) { "The focused text field is no longer available." }
-            // A retained target is not permission to paste into an obscured/old app.
-            // If STOP completes while SystemUI covers it, keep the result in history
-            // and clipboard rather than modifying that background field.
-            check(targetNode.isFocused && isEditableNode(targetNode) &&
-                rootInActiveWindow?.windowId == targetNode.windowId) {
+            // A retained target is not permission to modify an obscured or previously focused
+            // app. Re-check immediately before every editor action; if focus moved, leave the
+            // transcript on the clipboard instead of targeting the new field.
+            check(isOriginalTargetFocused(targetNode)) {
                 "The dictation target is no longer the active focused field."
             }
             val plan = DictationTextInsertion.plan(
@@ -254,7 +242,16 @@ class DictationAccessibilityService : AccessibilityService() {
                 // Some custom accessibility providers expose the drawn placeholder as
                 // node.text without setting isShowingHintText. Pasting only the transcript
                 // lets the editor mutate its real input buffer, without copying that hint.
+                if (!isOriginalTargetFocused(targetNode)) {
+                    if (copyToClipboard(text)) showCopiedToast()
+                    return
+                }
                 if (!copyToClipboard(plan.text)) return
+                if (!isOriginalTargetFocused(targetNode)) {
+                    copyToClipboard(text)
+                    showCopiedToast()
+                    return
+                }
                 if (!targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
                     Log.w(TAG, "Paste action rejected; transcript remains on clipboard")
                 }
@@ -268,10 +265,20 @@ class DictationAccessibilityService : AccessibilityService() {
                 )
             }
 
+            if (!isOriginalTargetFocused(targetNode)) {
+                if (copyToClipboard(text)) showCopiedToast()
+                return
+            }
             if (!targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
                 Log.i(TAG, "Set-text action rejected; attempting clipboard paste fallback")
-                if (copyToClipboard(text) && !targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
-                    Log.w(TAG, "Paste fallback rejected; transcript remains on clipboard")
+                if (copyToClipboard(text)) {
+                    if (isOriginalTargetFocused(targetNode)) {
+                        if (!targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
+                            Log.w(TAG, "Paste fallback rejected; transcript remains on clipboard")
+                        }
+                    } else {
+                        showCopiedToast()
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -300,6 +307,10 @@ class DictationAccessibilityService : AccessibilityService() {
             Log.e(TAG, "Clipboard copy error: ${e.message}")
             false
         }
+    }
+
+    private fun showCopiedToast() {
+        Toast.makeText(this, R.string.dictation_copied_to_clipboard, Toast.LENGTH_SHORT).show()
     }
 
     override fun onInterrupt() {

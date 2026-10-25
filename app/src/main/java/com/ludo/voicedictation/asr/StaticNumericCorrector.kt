@@ -30,6 +30,7 @@ internal class StaticNumericCorrector {
         private val clockSuffixPattern = Regex("""(?is)^\s*(?:a\.?m\.?|p\.?m\.?)(?![\p{L}\p{M}]).*""")
         private val clockPrefixPattern = Regex("""(?i)\b(?:at|around|by|until|before|after|for)\s+$""")
         private val oneAnotherSuffixPattern = Regex("""(?i)^\s+another\b""")
+        private val standaloneOnePattern = Regex("""(?<![\p{L}\p{M}])one(?![\p{L}\p{M}])""", RegexOption.IGNORE_CASE)
         private val numberPhraseSeparator = Regex("[\\s-]+")
         private val numericWords = numberWordValues.keys + scales.keys
 
@@ -51,6 +52,12 @@ internal class StaticNumericCorrector {
             }
             return false
         }
+
+        /** Detect context-sensitive “one” so AI can distinguish a value from ordinary wording. */
+        fun containsAmbiguousOne(text: String): Boolean =
+            standaloneOnePattern.findAll(text).any { match ->
+                !oneAnotherSuffixPattern.containsMatchIn(text.substring(match.range.last + 1))
+            }
     }
 
     fun apply(text: String): String = sequencePattern.replace(text) { match ->
@@ -61,7 +68,7 @@ internal class StaticNumericCorrector {
         val clockContext = hasClockSuffix || clockPrefixPattern.containsMatchIn(prefix)
         val timeParts = phrase.lowercase(Locale.ROOT).split(numberPhraseSeparator)
         when {
-            phrase.equals("one", ignoreCase = true) && oneAnotherSuffixPattern.containsMatchIn(suffix) -> phrase
+            phrase.equals("one", ignoreCase = true) -> phrase
             clockContext -> formatClock(timeParts, hasClockSuffix) ?: parse(phrase) ?: phrase
             else -> parse(phrase) ?: phrase
         }

@@ -324,11 +324,6 @@ class SettingsFragment : Fragment() {
             prefs.avoidAutofillOverlayCollisions = enabled
             DictationAccessibilityService.instance?.refreshServiceState()
         }
-
-        binding.switchCopyOnFocusChange.isChecked = prefs.copyOnFocusChange
-        binding.switchCopyOnFocusChange.setOnCheckedChangeListener { _, enabled ->
-            prefs.copyOnFocusChange = enabled
-        }
     }
 
     private fun setupAppUpdates() {

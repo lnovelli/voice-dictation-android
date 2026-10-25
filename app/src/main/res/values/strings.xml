@@ -60,9 +60,7 @@
     <string name="overlay_scale_hint">50–150% of the original size. Changes apply immediately. Drag partly beyond any screen edge; a small part stays reachable.</string>
     <string name="avoid_autofill_collision_title">Avoid autofill overlay collisions</string>
     <string name="avoid_autofill_collision_hint">Temporarily hide the floating button when an autofill popup or another app/system window is over the focused text field.</string>
-    <string name="copy_on_focus_change_title">Copy on focus change</string>
-    <string name="copy_on_focus_change_hint">When enabled, dictation is inserted only into the field focused when recording started. If focus changes, the text is copied to the clipboard and a short toast appears. Turn off to insert into the currently focused field instead.</string>
-    <string name="dictation_copied_focus_changed">Focus changed — dictation copied to clipboard</string>
+    <string name="dictation_copied_to_clipboard">Dictation copied to clipboard</string>
     <string name="vocabulary_spelling_label">Use custom vocabulary spelling</string>
     <string name="vocabulary_spelling_hint">Post-transcript spelling only: recases or joins/splits spaces when the recognized letters already match. Independent of the experimental acoustic hotword switch in the Vocabulary tab; these hints cannot correct sound-alike recognition.</string>
     <string name="acoustic_vocabulary_title">Acoustic Custom-Word Decoding (Experimental)</string>
@@ -88,11 +86,12 @@
     <string name="btn_add">Add</string>
     <string name="empty_vocabulary">No custom terms yet. Add terms above to use as spelling hints or experimental acoustic hotwords.</string>
     <string name="transcript_formatting_title">Transcript Formatting and Polishing</string>
-    <string name="static_numeric_corrections_toggle">Convert English number words to digits</string>
+    <string name="static_numeric_corrections_toggle">Convert clear English number phrases to digits</string>
+    <string name="static_numeric_corrections_hint">A standalone “one” stays spelled out. Multi-word numerals such as “twenty one” are still converted.</string>
     <string name="polishing_minimum_words_label">Minimum words for AI polishing</string>
     <string name="polishing_minimum_words_value">Minimum words before AI polishing: %1$d</string>
-    <string name="polishing_auto_number_sequences_toggle">Auto-polish nearby number sequences</string>
-    <string name="polishing_auto_number_sequences_hint">Below the minimum only: polish when two or more numbers occur with no more than two words between them, such as “4 30 pm” or “16 oh five”. Spelled-out numbers do not bypass the minimum-word threshold.</string>
+    <string name="polishing_auto_number_sequences_toggle">Auto-polish ambiguous numbers</string>
+    <string name="polishing_auto_number_sequences_hint">Below the minimum only: polish when “one” appears as a whole word (except “one another”), or when two or more number tokens are within two intervening words, such as “4 30 pm”. Requires the master AI-polishing switch. AI uses context to decide whether “one” means 1; static conversion leaves standalone “one” unchanged.</string>
 
     <string name="string_replacement_title">Custom String Replacements</string>
     <string name="string_replacement_hint">Map common transcription variants to the intended text. Each rule can have several input alternatives, one per line. Matching is case-insensitive and respects whole words and phrases; replacements apply to final transcripts.</string>

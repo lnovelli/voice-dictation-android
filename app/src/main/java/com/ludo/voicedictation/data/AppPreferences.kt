@@ -25,7 +25,6 @@ class AppPreferences(context: Context) {
         private const val KEY_OVERLAY_OPACITY = "overlay_opacity"
         private const val KEY_OVERLAY_SCALE = "overlay_scale_percent"
         private const val KEY_AVOID_AUTOFILL_OVERLAY_COLLISIONS = "avoid_autofill_overlay_collisions"
-        private const val KEY_COPY_ON_FOCUS_CHANGE = "copy_on_focus_change"
         private const val KEY_VOCABULARY_SPELLING = "vocabulary_spelling_enabled"
         private const val KEY_ACOUSTIC_VOCABULARY_ENABLED = "acoustic_vocabulary_enabled"
         private const val KEY_ACOUSTIC_MAX_ACTIVE_PATHS = "acoustic_max_active_paths"
@@ -122,12 +121,6 @@ class AppPreferences(context: Context) {
     var avoidAutofillOverlayCollisions: Boolean
         get() = prefs.getBoolean(KEY_AVOID_AUTOFILL_OVERLAY_COLLISIONS, true)
         set(value) = prefs.edit().putBoolean(KEY_AVOID_AUTOFILL_OVERLAY_COLLISIONS, value).apply()
-
-    /** If focus leaves the field where dictation began, preserve text in the clipboard instead. */
-    var copyOnFocusChange: Boolean
-        get() = prefs.getBoolean(KEY_COPY_ON_FOCUS_CHANGE, true)
-        set(value) = prefs.edit().putBoolean(KEY_COPY_ON_FOCUS_CHANGE, value).apply()
-
     /** Read a complete orientation-specific pair, migrating a legacy position into the first mode opened. */
     fun savedOverlayPosition(isLandscape: Boolean): Pair<Int, Int>? {
         val (xKey, yKey) = if (isLandscape) {
