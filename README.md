@@ -22,9 +22,11 @@ See [live TDT chunking, safeguards, and limitations](docs/live-tdt-vad-chunking.
 - **One-Click Model Download:** In-app model downloader with real-time progress, background transfer, and automatic local archive extraction for all three models.
 - **Smart Floating Overlay Button:**
   - Automatically appears when any editable text input field receives focus across the operating system.
+  - On Android 13+, system input-start/finish callbacks also detect editors that hide their accessibility nodes; the app does not read typed text or cursor positions.
+  - Optional **Keep button visible while unlocked** mode supports apps that do not expose editable focus to accessibility services. It can overlap sensitive screens; Android can still hide overlays when an app explicitly blocks them, and inaccessible fields may require clipboard paste.
   - Draggable partly beyond any screen edge, with independent saved positions for portrait and landscape; an unset position starts vertically centered at the right edge.
   - Adjustable floating icon size (50–150%) and opacity, applied immediately from Settings.
-  - Hides automatically when focus moves away from text fields.
+  - In normal focus-triggered mode, hides when focus moves away from text fields; the optional always-visible mode stays on while the device is unlocked.
   - Settings can disable autofill/competing-window collision suppression. Dictation inserts only into the field focused when recording started; if focus changes or no field was focused, the result is copied to the clipboard with a brief toast.
 - **Speech-activity indicator and live TDT chunking (1.2.4):** Bundles the 212,860-byte Silero 16 kHz INT8 model. During live microphone recording, the floating button keeps its breathing animation but is gray when the VAD reports no speech and red when it detects speech. TDT uses VAD endpoints to queue exact PCM ranges without trimming or filtering the original audio. If VAD is unavailable, recording continues and the remaining TDT audio is decoded unsplit.
 - **Model-specific capture and recognition (1.2.1):**

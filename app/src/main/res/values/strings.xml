@@ -60,6 +60,8 @@
     <string name="overlay_scale_hint">50–150% of the original size. Changes apply immediately. Drag partly beyond any screen edge; a small part stays reachable.</string>
     <string name="avoid_autofill_collision_title">Avoid autofill overlay collisions</string>
     <string name="avoid_autofill_collision_hint">Temporarily hide the floating button when an autofill popup or another app/system window is over the focused text field.</string>
+    <string name="always_show_overlay_title">Keep button visible while unlocked</string>
+    <string name="always_show_overlay_hint">Useful when an app does not expose text-field focus. Overrides collision hiding and can show over password or banking screens. Android may still block overlays in apps that explicitly hide them; dictation may then copy to the clipboard if the field is inaccessible.</string>
     <string name="dictation_copied_to_clipboard">Dictation copied to clipboard</string>
     <string name="vocabulary_spelling_label">Use custom vocabulary spelling</string>
     <string name="vocabulary_spelling_hint">Post-transcript spelling only: recases or joins/splits spaces when the recognized letters already match. Independent of the experimental acoustic hotword switch in the Vocabulary tab; these hints cannot correct sound-alike recognition.</string>

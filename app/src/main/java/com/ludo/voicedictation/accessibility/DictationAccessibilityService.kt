@@ -1,11 +1,16 @@
 package com.ludo.voicedictation.accessibility
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.accessibilityservice.InputMethod
 import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.PowerManager
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -14,6 +19,8 @@ import android.util.Log
 import android.widget.Toast
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.inputmethod.EditorInfo
+import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import com.ludo.voicedictation.R
 import com.ludo.voicedictation.asr.SpeechEngine
@@ -37,13 +44,23 @@ class DictationAccessibilityService : AccessibilityService() {
     private var lastFocusedNode: AccessibilityNodeInfo? = null
     private var sessionTargetNode: AccessibilityNodeInfo? = null
     private var systemUiSuppressingOverlay = false
+    private var inputEditorActive = false
+    private var inputEditorPackage: String? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val reconcileAfterInputFinish = Runnable { refreshServiceState() }
     private var screenReceiverRegistered = false
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
-                lastFocusedNode = null
-                sessionTargetNode = null
-                overlayManager.hide() // Explicit safety cancellation, not a focus transition.
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    lastFocusedNode = null
+                    sessionTargetNode = null
+                    inputEditorActive = false
+                    inputEditorPackage = null
+                    mainHandler.removeCallbacks(reconcileAfterInputFinish)
+                    overlayManager.hide() // Explicit safety cancellation, not a focus transition.
+                }
+                Intent.ACTION_USER_PRESENT -> refreshServiceState()
             }
         }
     }
@@ -64,19 +81,59 @@ class DictationAccessibilityService : AccessibilityService() {
             sessionTargetNode = null
             refreshServiceState()
         }
-        ContextCompat.registerReceiver(this, screenReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF),
+        ContextCompat.registerReceiver(this, screenReceiver,
+            IntentFilter(Intent.ACTION_SCREEN_OFF).apply { addAction(Intent.ACTION_USER_PRESENT) },
             ContextCompat.RECEIVER_NOT_EXPORTED)
         screenReceiverRegistered = true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val info = serviceInfo
+            info.flags = info.flags or AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR
+            setServiceInfo(info)
+        }
         refreshServiceState()
         Log.i(TAG, "DictationAccessibilityService connected")
     }
 
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    override fun onCreateInputMethod(): InputMethod =
+        object : InputMethod(this@DictationAccessibilityService) {
+            override fun onStartInput(attribute: EditorInfo, restarting: Boolean) {
+                inputEditorActive = true
+                inputEditorPackage = attribute.packageName?.toString()
+                mainHandler.removeCallbacks(reconcileAfterInputFinish)
+                if (!prefs.serviceEnabled || !isScreenUsable()) return
+
+                val editorPackage = inputEditorPackage
+                if (prefs.avoidAutofillOverlayCollisions && editorPackage != null &&
+                    hasCompetingWindow(editorPackage)) {
+                    systemUiSuppressingOverlay = true
+                    overlayManager.hideTemporarily()
+                } else {
+                    systemUiSuppressingOverlay = false
+                    overlayManager.show()
+                }
+            }
+
+            override fun onFinishInput() {
+                inputEditorActive = false
+                inputEditorPackage = null
+                mainHandler.removeCallbacks(reconcileAfterInputFinish)
+                // A new editor may start immediately after this callback. Re-evaluate once
+                // the system has delivered the complete input-focus transition.
+                mainHandler.postDelayed(reconcileAfterInputFinish, 120L)
+            }
+        }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || !prefs.serviceEnabled) return
+        if (prefs.alwaysShowOverlay) {
+            systemUiSuppressingOverlay = false
+            return
+        }
         if (!prefs.avoidAutofillOverlayCollisions) systemUiSuppressingOverlay = false
         val activeInput = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         val editorPackage = (if (isEditableNode(activeInput)) activeInput?.packageName else null)
-            ?.toString() ?: lastFocusedNode?.packageName?.toString()
+            ?.toString() ?: inputEditorPackage ?: lastFocusedNode?.packageName?.toString()
 
         // Autofill dropdowns and other transient system/app windows can appear while the
         // underlying editor remains focused. Do not re-add our application overlay above them.
@@ -140,15 +197,22 @@ class DictationAccessibilityService : AccessibilityService() {
         if (!prefs.avoidAutofillOverlayCollisions) systemUiSuppressingOverlay = false
         if (!prefs.serviceEnabled || !isScreenUsable()) {
             lastFocusedNode = null
+            inputEditorActive = false
+            inputEditorPackage = null
+            mainHandler.removeCallbacks(reconcileAfterInputFinish)
             overlayManager.hide()
+        } else if (prefs.alwaysShowOverlay) {
+            systemUiSuppressingOverlay = false
+            overlayManager.show()
         } else if (prefs.avoidAutofillOverlayCollisions &&
             (rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
                 ?.takeIf(::isEditableNode)?.packageName?.toString()
-                ?: lastFocusedNode?.packageName?.toString())?.let(::hasCompetingWindow) == true) {
+                ?: inputEditorPackage ?: lastFocusedNode?.packageName?.toString())
+                ?.let(::hasCompetingWindow) == true) {
             systemUiSuppressingOverlay = true
             overlayManager.hideTemporarily()
         } else if (systemUiSuppressingOverlay) {
-            val editorPackage = lastFocusedNode?.packageName?.toString()
+            val editorPackage = inputEditorPackage ?: lastFocusedNode?.packageName?.toString()
             if (hasCompetingWindow(editorPackage)) overlayManager.hideTemporarily()
             else {
                 systemUiSuppressingOverlay = false
@@ -178,6 +242,10 @@ class DictationAccessibilityService : AccessibilityService() {
             val activeInput = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
             if (isEditableNode(activeInput)) {
                 lastFocusedNode = activeInput
+                overlayManager.show()
+            } else if (inputEditorActive) {
+                // Android 13+ can report an active editor through the input-method
+                // callbacks even when its accessibility node is intentionally hidden.
                 overlayManager.show()
             } else if (!speechEngine.isLocalSessionActive && !speechEngine.isExternalSessionActive) {
                 lastFocusedNode = null
@@ -317,6 +385,9 @@ class DictationAccessibilityService : AccessibilityService() {
         Log.w(TAG, "DictationAccessibilityService interrupted")
         lastFocusedNode = null
         sessionTargetNode = null
+        inputEditorActive = false
+        inputEditorPackage = null
+        mainHandler.removeCallbacks(reconcileAfterInputFinish)
         if (::overlayManager.isInitialized) overlayManager.hide()
     }
 
@@ -326,6 +397,7 @@ class DictationAccessibilityService : AccessibilityService() {
             unregisterReceiver(screenReceiver)
             screenReceiverRegistered = false
         }
+        mainHandler.removeCallbacks(reconcileAfterInputFinish)
         if (::overlayManager.isInitialized) overlayManager.destroy()
         sessionTargetNode = null
         instance = null

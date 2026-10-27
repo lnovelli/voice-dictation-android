@@ -319,6 +319,11 @@ class SettingsFragment : Fragment() {
     }
 
     private fun setupFocusAndOverlayBehavior() {
+        binding.switchAlwaysShowOverlay.isChecked = prefs.alwaysShowOverlay
+        binding.switchAlwaysShowOverlay.setOnCheckedChangeListener { _, enabled ->
+            prefs.alwaysShowOverlay = enabled
+            DictationAccessibilityService.instance?.refreshServiceState()
+        }
         binding.switchAvoidAutofillCollision.isChecked = prefs.avoidAutofillOverlayCollisions
         binding.switchAvoidAutofillCollision.setOnCheckedChangeListener { _, enabled ->
             prefs.avoidAutofillOverlayCollisions = enabled

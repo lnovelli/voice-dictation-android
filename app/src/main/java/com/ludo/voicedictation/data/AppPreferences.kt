@@ -25,6 +25,7 @@ class AppPreferences(context: Context) {
         private const val KEY_OVERLAY_OPACITY = "overlay_opacity"
         private const val KEY_OVERLAY_SCALE = "overlay_scale_percent"
         private const val KEY_AVOID_AUTOFILL_OVERLAY_COLLISIONS = "avoid_autofill_overlay_collisions"
+        private const val KEY_ALWAYS_SHOW_OVERLAY = "always_show_overlay"
         private const val KEY_VOCABULARY_SPELLING = "vocabulary_spelling_enabled"
         private const val KEY_ACOUSTIC_VOCABULARY_ENABLED = "acoustic_vocabulary_enabled"
         private const val KEY_ACOUSTIC_MAX_ACTIVE_PATHS = "acoustic_max_active_paths"
@@ -121,6 +122,12 @@ class AppPreferences(context: Context) {
     var avoidAutofillOverlayCollisions: Boolean
         get() = prefs.getBoolean(KEY_AVOID_AUTOFILL_OVERLAY_COLLISIONS, true)
         set(value) = prefs.edit().putBoolean(KEY_AVOID_AUTOFILL_OVERLAY_COLLISIONS, value).apply()
+
+    /** Keep the button visible while unlocked, even when apps do not expose editable focus. */
+    var alwaysShowOverlay: Boolean
+        get() = prefs.getBoolean(KEY_ALWAYS_SHOW_OVERLAY, false)
+        set(value) = prefs.edit().putBoolean(KEY_ALWAYS_SHOW_OVERLAY, value).apply()
+
     /** Read a complete orientation-specific pair, migrating a legacy position into the first mode opened. */
     fun savedOverlayPosition(isLandscape: Boolean): Pair<Int, Int>? {
         val (xKey, yKey) = if (isLandscape) {
