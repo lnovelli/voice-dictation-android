@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.2.10 (build 31; ARM64-only)
+## Current release: v1.2.11 (build 32; ARM64-only)
 
-Adds below-threshold AI polishing for whole-word “one” when enabled, so the model can decide from context; static number conversion leaves standalone “one” unchanged. Local dictation now copies results to the clipboard rather than inserting into a new field if focus changes.
+Improves floating-button detection on Android 13+ with system input-start/finish callbacks for editors that hide accessibility nodes; Voice Dictation does not read typed text or cursor positions. Adds an opt-in always-visible mode while unlocked. Apps and Android may still block overlays, and inaccessible fields may require clipboard paste.
 
 See [live TDT chunking, safeguards, and limitations](docs/live-tdt-vad-chunking.md).
 
