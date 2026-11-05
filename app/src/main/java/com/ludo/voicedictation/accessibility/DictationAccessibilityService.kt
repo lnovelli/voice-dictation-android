@@ -14,11 +14,11 @@ import android.os.Looper
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.view.inputmethod.EditorInfo
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
@@ -41,7 +41,6 @@ class DictationAccessibilityService : AccessibilityService() {
 
     private lateinit var overlayManager: OverlayManager
     private val prefs by lazy { AppPreferences(this) }
-    private var lastFocusedNode: AccessibilityNodeInfo? = null
     private var sessionTargetNode: AccessibilityNodeInfo? = null
     private var systemUiSuppressingOverlay = false
     private var inputEditorActive = false
@@ -53,7 +52,6 @@ class DictationAccessibilityService : AccessibilityService() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
-                    lastFocusedNode = null
                     sessionTargetNode = null
                     inputEditorActive = false
                     inputEditorPackage = null
@@ -101,17 +99,9 @@ class DictationAccessibilityService : AccessibilityService() {
                 inputEditorActive = true
                 inputEditorPackage = attribute.packageName?.toString()
                 mainHandler.removeCallbacks(reconcileAfterInputFinish)
-                if (!prefs.serviceEnabled || !isScreenUsable()) return
-
-                val editorPackage = inputEditorPackage
-                if (prefs.avoidAutofillOverlayCollisions && editorPackage != null &&
-                    hasCompetingWindow(editorPackage)) {
-                    systemUiSuppressingOverlay = true
-                    overlayManager.hideTemporarily()
-                } else {
-                    systemUiSuppressingOverlay = false
-                    overlayManager.show()
-                }
+                refreshServiceState()
+                // Input callbacks and the accessibility tree can arrive in either order.
+                mainHandler.postDelayed(reconcileAfterInputFinish, 120L)
             }
 
             override fun onFinishInput() {
@@ -132,8 +122,8 @@ class DictationAccessibilityService : AccessibilityService() {
         }
         if (!prefs.avoidAutofillOverlayCollisions) systemUiSuppressingOverlay = false
         val activeInput = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-        val editorPackage = (if (isEditableNode(activeInput)) activeInput?.packageName else null)
-            ?.toString() ?: inputEditorPackage ?: lastFocusedNode?.packageName?.toString()
+        val editorPackage = (if (isFocusedEditableNode(activeInput)) activeInput?.packageName else null)
+            ?.toString() ?: inputEditorPackage
 
         // Autofill dropdowns and other transient system/app windows can appear while the
         // underlying editor remains focused. Do not re-add our application overlay above them.
@@ -147,14 +137,11 @@ class DictationAccessibilityService : AccessibilityService() {
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_FOCUSED,
             AccessibilityEvent.TYPE_VIEW_CLICKED -> {
-                val source = event.source
-                if (isEditableNode(source) && source?.packageName?.toString() == event.packageName?.toString()) {
+                // A clicked or accessibility-focused source is not proof of keyboard focus.
+                if (systemUiSuppressingOverlay && !hasCompetingWindow(editorPackage)) {
                     systemUiSuppressingOverlay = false
-                    handleFocusEvent(source)
-                } else if (systemUiSuppressingOverlay && !hasCompetingWindow(editorPackage)) {
-                    systemUiSuppressingOverlay = false
-                    handleFocusEvent(activeInput)
                 }
+                if (!systemUiSuppressingOverlay) handleFocusEvent(activeInput)
             }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
@@ -196,7 +183,6 @@ class DictationAccessibilityService : AccessibilityService() {
     fun refreshServiceState() {
         if (!prefs.avoidAutofillOverlayCollisions) systemUiSuppressingOverlay = false
         if (!prefs.serviceEnabled || !isScreenUsable()) {
-            lastFocusedNode = null
             inputEditorActive = false
             inputEditorPackage = null
             mainHandler.removeCallbacks(reconcileAfterInputFinish)
@@ -206,13 +192,13 @@ class DictationAccessibilityService : AccessibilityService() {
             overlayManager.show()
         } else if (prefs.avoidAutofillOverlayCollisions &&
             (rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-                ?.takeIf(::isEditableNode)?.packageName?.toString()
-                ?: inputEditorPackage ?: lastFocusedNode?.packageName?.toString())
+                ?.takeIf(::isFocusedEditableNode)?.packageName?.toString()
+                ?: inputEditorPackage)
                 ?.let(::hasCompetingWindow) == true) {
             systemUiSuppressingOverlay = true
             overlayManager.hideTemporarily()
         } else if (systemUiSuppressingOverlay) {
-            val editorPackage = inputEditorPackage ?: lastFocusedNode?.packageName?.toString()
+            val editorPackage = inputEditorPackage
             if (hasCompetingWindow(editorPackage)) overlayManager.hideTemporarily()
             else {
                 systemUiSuppressingOverlay = false
@@ -230,33 +216,47 @@ class DictationAccessibilityService : AccessibilityService() {
     private fun handleFocusEvent(node: AccessibilityNodeInfo?) {
         val speechEngine = SpeechEngine.getInstance(this)
         if (!isScreenUsable()) {
-            lastFocusedNode = null
             overlayManager.hide()
             return
         }
-        if (isEditableNode(node)) {
-            lastFocusedNode = node
-            overlayManager.show()
+        val root = rootInActiveWindow
+        val window = root?.let { active -> windows.firstOrNull { it.id == active.windowId } }
+        // Never mistake an IME suggestion/search control or system overlay for the app editor.
+        // Some providers omit the window from the interactive windows list.
+        val applicationWindow = root != null &&
+            (window == null || window.type == AccessibilityWindowInfo.TYPE_APPLICATION)
+        val eligibleEditor = if (!applicationWindow || (node != null && node.windowId != root?.windowId)) {
+            false
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // A live input session is the authoritative editor signal. If the active tree
+            // exposes input focus, it must agree; a focused button must not inherit a stale
+            // session. Some editors misreport isEditable despite their text-field class.
+            inputEditorActive && root != null && inputEditorPackage != null &&
+                root.packageName?.toString() == inputEditorPackage &&
+                (node == null || (node.packageName?.toString() == inputEditorPackage &&
+                    isFocusedInputSessionEditor(node)))
         } else {
-            // Check if there's any active input focus in the window
-            val activeInput = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            if (isEditableNode(activeInput)) {
-                lastFocusedNode = activeInput
-                overlayManager.show()
-            } else if (inputEditorActive) {
-                // Android 13+ can report an active editor through the input-method
-                // callbacks even when its accessibility node is intentionally hidden.
-                overlayManager.show()
-            } else if (!speechEngine.isLocalSessionActive && !speechEngine.isExternalSessionActive) {
-                lastFocusedNode = null
-                overlayManager.hide()
-            }
-            // Expanding notification/quick-settings panels replaces rootInActiveWindow
-            // with a non-editable SystemUI window. That is NOT a recording cancel.
-            // Keep the active local or external status indicator until completion. Normal idle-focus
-            // hiding is re-evaluated after delivery. Explicit hide/lock removes the local overlay;
-            // external sessions remain owned and cancellable by their IPC client.
+            isFocusedEditableNode(node)
         }
+        if (eligibleEditor) {
+            overlayManager.show()
+        } else if (!speechEngine.isLocalSessionActive && !speechEngine.isExternalSessionActive) {
+            overlayManager.hide()
+        }
+        // A transient shade or focus change must not cancel an active recording. Normal
+        // idle-focus hiding is re-evaluated after delivery; explicit hide/lock remains separate.
+    }
+
+    private fun isFocusedEditableNode(node: AccessibilityNodeInfo?): Boolean =
+        node != null && node.isFocused && node.isEnabled && node.isEditable
+
+    /** Fallback is only used with a matching, live Android 13+ input session. */
+    private fun isFocusedInputSessionEditor(node: AccessibilityNodeInfo): Boolean {
+        if (!node.isFocused || !node.isEnabled) return false
+        if (node.isEditable) return true
+        val className = node.className?.toString() ?: return false
+        return className.endsWith("EditText", ignoreCase = true) ||
+            className.endsWith("AutoCompleteTextView", ignoreCase = true)
     }
 
     private fun isEditableNode(node: AccessibilityNodeInfo?): Boolean {
@@ -290,68 +290,21 @@ class DictationAccessibilityService : AccessibilityService() {
         }
 
         try {
-            // A retained target is not permission to modify an obscured or previously focused
-            // app. Re-check immediately before every editor action; if focus moved, leave the
-            // transcript on the clipboard instead of targeting the new field.
-            check(isOriginalTargetFocused(targetNode)) {
-                "The dictation target is no longer the active focused field."
-            }
-            val plan = DictationTextInsertion.plan(
-                existingText = targetNode.text?.toString(),
-                showingHint = targetNode.isShowingHintText,
-                hintText = targetNode.hintText?.toString(),
-                contentDescription = targetNode.contentDescription?.toString(),
-                selectionStart = targetNode.textSelectionStart,
-                selectionEnd = targetNode.textSelectionEnd,
-                transcription = text
-            )
-
-            if (plan.method == DictationTextInsertion.Method.PASTE_AT_CURSOR) {
-                // Some custom accessibility providers expose the drawn placeholder as
-                // node.text without setting isShowingHintText. Pasting only the transcript
-                // lets the editor mutate its real input buffer, without copying that hint.
-                if (!isOriginalTargetFocused(targetNode)) {
-                    if (copyToClipboard(text)) showCopiedToast()
-                    return
-                }
-                if (!copyToClipboard(plan.text)) return
-                if (!isOriginalTargetFocused(targetNode)) {
-                    copyToClipboard(text)
-                    showCopiedToast()
-                    return
-                }
-                if (!targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
-                    Log.w(TAG, "Paste action rejected; transcript remains on clipboard")
-                }
-                return
-            }
-
-            val arguments = Bundle().apply {
-                putCharSequence(
-                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                    plan.text
-                )
-            }
-
-            if (!isOriginalTargetFocused(targetNode)) {
-                if (copyToClipboard(text)) showCopiedToast()
-                return
-            }
-            if (!targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
-                Log.i(TAG, "Set-text action rejected; attempting clipboard paste fallback")
-                if (copyToClipboard(text)) {
-                    if (isOriginalTargetFocused(targetNode)) {
-                        if (!targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
-                            Log.w(TAG, "Paste fallback rejected; transcript remains on clipboard")
-                        }
-                    } else {
-                        showCopiedToast()
-                    }
-                }
+            // Let the editor perform a real paste at its current cursor or selection.
+            // Rebuilding node.text would lose editor state, mishandle placeholders, and
+            // could append to the wrong position. No automatic whitespace is added.
+            if (!copyToClipboard(text)) return
+            // The retained node is not permission to modify a previously focused field.
+            // Re-check immediately before paste; leave the transcript on the clipboard
+            // if focus moved or the editor refuses the paste action.
+            if (!isOriginalTargetFocused(targetNode) ||
+                !targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
+                Log.w(TAG, "Paste unavailable; transcript remains on clipboard")
+                showCopiedToast()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to insert text: ${e.message}", e)
-            copyToClipboard(text)
+            if (copyToClipboard(text)) showCopiedToast()
         } finally {
             sessionTargetNode = null
         }
@@ -383,7 +336,6 @@ class DictationAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         Log.w(TAG, "DictationAccessibilityService interrupted")
-        lastFocusedNode = null
         sessionTargetNode = null
         inputEditorActive = false
         inputEditorPackage = null

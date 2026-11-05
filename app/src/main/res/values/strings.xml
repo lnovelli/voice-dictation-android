@@ -6,7 +6,7 @@
     <string name="tab_history">History</string>
     <string name="tab_polishing">Polish</string>
     <string name="polishing_enabled_label">Enable AI transcript polishing</string>
-    <string name="polishing_privacy_hint">Off by default. When enabled, your saved system prompt, the final transcript, and personal vocabulary are sent as text to this configured server; audio is never sent. 127.0.0.1 refers to this phone.</string>
+    <string name="polishing_privacy_hint">Off by default. When enabled, your saved system prompt, fixed input/output instructions, transcript chunks and personal vocabulary are sent as text to this configured server; audio is never sent. 127.0.0.1 refers to this phone. Polishing requires support for JSON-schema responses; on failure the original transcript is kept.</string>
     <string name="polishing_server_title">OpenAI-Compatible Server</string>
     <string name="polishing_server_hint">Enter the server base URL and model. For example, http://127.0.0.1:11434 with model default. The app calls /v1/chat/completions (or /chat/completions when the URL ends in /v1). HTTP is restricted to this phone; use HTTPS for other hosts.</string>
     <string name="polishing_endpoint_hint">Base URL</string>
@@ -19,18 +19,27 @@
     <string name="polishing_save">Save settings</string>
     <string name="polishing_test">Test connection</string>
     <string name="polishing_prompt_title">System prompt</string>
-    <string name="polishing_prompt_hint">Edit the system message used for polishing and save to apply it. It is sent to your configured server together with the transcript and custom vocabulary. The connection test uses synthetic text, not this prompt or a real transcript. Maximum 12,000 characters. Restore the built-in prompt at any time.</string>
+    <string name="polishing_prompt_hint">Edit the polishing instructions and save to apply them. Fixed input/output instructions are appended when sending your prompt, transcript chunks and custom vocabulary to the server. The connection test uses synthetic text and does not check the prompt or JSON-schema support. Maximum 12,000 characters. Restore the built-in prompt at any time.</string>
     <string name="polishing_prompt_field_hint">System prompt</string>
     <string name="polishing_prompt_reset">Restore built-in prompt</string>
     <string name="polishing_prompt_restored">Built-in prompt restored and saved.</string>
     
     <string name="model_section_title">Speech Recognition Model</string>
+    <string name="asr_threads_title">Recognizer threads</string>
+    <string name="asr_threads_value">Recognizer threads: %1$d</string>
+    <string name="asr_threads_hint">Choose 2–4 threads for TDT and Nemotron recognition. Changes apply to subsequent recognition sessions. Speed, battery use and heat depend on your device. Voice activity detection uses a separate single thread.</string>
+    <string name="always_tdt_dither_label">Always dither TDT (experimental)</string>
+    <string name="always_tdt_dither_description">Off by default. For new Parakeet TDT v2/v3 live, History and file recognition sessions, use fixed 0.001 feature dither on normal decodes and retries. When off, empty-result retries still use dither. This may change results or produce hallucinated words. Saved audio is unchanged. Nemotron streaming and VAD are unaffected.</string>
+    <string name="tdt_vad_chunking_label">VAD chunking for live TDT</string>
+    <string name="tdt_vad_chunking_description">For new live Parakeet TDT v2/v3 recordings only. A pause closes a chunk after 5 seconds of detected speech, or after about 3 seconds of silence regardless of speech duration. On Stop, a tail of at least 1 second is processed; a shorter tail is processed if speech is detected or VAD is unavailable. Before decoding, classified trailing silence is cut after the last positive 32 ms frame, without a 200 ms margin. If no complete frame is positive, trailing-edge trimming leaves the chunk intact; optional internal silence removal can still apply. An unclassified final partial frame is kept even if earlier silence is removed, which can create a discontinuity. VAD can cut quiet speech or word endings. Saved audio is unchanged. When off, transcription starts after Stop. Streaming uses no VAD, so these controls are unavailable for Nemotron. Imported audio and History retries are unaffected by this setting.</string>
+    <string name="tdt_remove_silence_label">Remove silence from live TDT (experimental)</string>
+    <string name="tdt_remove_silence_description">Only applies while VAD chunking is on, to future live microphone recordings with Parakeet TDT v2/v3. Removes parts of VAD-negative runs lasting at least 200 ms before decoding; with 32 ms frames the shortest eligible run is 224 ms. For this optional removal, keeps 200 ms at the end of each negative run (before the next speech) and at the start of each chunk; the separate trailing-edge trim may still cut a final run. VAD can still mistake quiet speech for silence and lose words. The saved original recording is unchanged. Nemotron streaming, imported audio, and History retries are unaffected.</string>
     <string name="model_parakeet_v2">Parakeet TDT 0.6B v2 (English)</string>
     <string name="model_parakeet_v2_desc">Fast, highly accurate English model with punctuation and capitalization (~600MB)</string>
     <string name="model_parakeet_v3">Parakeet TDT 0.6B v3 (Multilingual)</string>
     <string name="model_parakeet_v3_desc">Supports 25 European languages (~600MB). Long internal pauses or quiet/noisy padding can lose speech; use shorter recordings.</string>
-    <string name="model_parakeet_unified">Parakeet Unified 0.6B (English, Streaming)</string>
-    <string name="model_parakeet_unified_desc">Processes audio during recording for a quicker final result. English only; no live transcript preview (~480MB download).</string>
+    <string name="model_nemotron_streaming">Nemotron 3.5 ASR 0.6B (Multilingual, Streaming)</string>
+    <string name="model_nemotron_streaming_desc">Processes audio during recording; no live transcript preview. Multilingual, with automatic language detection. INT8, 1120 ms model chunks; ~475 MB download.</string>
     
     <string name="status_not_downloaded">Not Downloaded</string>
     <string name="status_downloading">Downloading…</string>
@@ -68,7 +77,7 @@
     <string name="acoustic_vocabulary_title">Acoustic Custom-Word Decoding (Experimental)</string>
     <string name="acoustic_vocabulary_toggle">Enable acoustic hotword bias</string>
     <string name="acoustic_vocabulary_warning">Off by default to preserve unbiased recognition. Modified beam search can repeat terms or change/omit unrelated speech; previous native probes reproduced this. The four-path, score-1 setup is exposed for testing, not accuracy-guaranteed. Blank penalty is fixed at 0.0. Only plain text terms (letters, digits, spaces, apostrophes or hyphens) are used for acoustic bias; unsupported saved entries remain available as spelling hints.</string>
-    <string name="acoustic_vocabulary_streaming_notice">Acoustic hotword decoding is not applied to Parakeet Unified streaming. Saved settings remain available when you switch back to a TDT model; custom spelling still applies to the final transcript.</string>
+    <string name="acoustic_vocabulary_streaming_notice">Acoustic hotword decoding is not applied to Nemotron streaming. Saved settings remain available when you switch back to a TDT model; custom spelling still applies to the final transcript.</string>
     <string name="max_active_paths_label">Active search paths</string>
     <string name="max_active_paths_value">Active search paths: %1$d (2–8)</string>
     <string name="hotwords_score_label">Hotword score</string>
@@ -120,10 +129,27 @@
     <string name="string_replacement_cleared">All string replacements cleared</string>
     
     <string name="history_title">Transcription History</string>
-    <string name="history_audio_hint">Original audio is stored privately on this device, excluded from backups, and removed when its history entry is deleted or trimmed. Reprocess decodes again with acoustic hotword bias disabled and replaces the transcript only; older entries have no saved audio.</string>
+    <string name="history_audio_hint">Original audio is stored privately on this device, excluded from backups, and removed when its history entry is deleted or trimmed. Reprocess disables acoustic hotword bias; VAD retries use current acoustic vocabulary settings. All retries replace the transcript only. Older entries have no saved audio.</string>
     <string name="history_audio_play">Play audio</string>
     <string name="history_audio_stop">Stop audio</string>
     <string name="history_audio_reprocess">Reprocess</string>
+    <string name="history_audio_reprocess_vad">Reprocess with VAD</string>
+    <string name="history_audio_reprocess_vad_remove_silence">VAD retry: remove silence (experimental)</string>
+    <string name="history_audio_reprocess_vad_remove_silence_explanation">Experimental: removes parts of VAD-negative runs lasting at least 200 ms before decoding. VAD measures 32 ms frames, so the shortest eligible run is 224 ms. For this optional removal, keeps 200 ms at the end of each negative run (before the next speech) and at the start of each chunk; the separate trailing-edge trim may still cut a final run. The detector can still mistake quiet speech for silence and cut it out, losing words. The saved recording is unchanged.</string>
+    <string name="history_audio_reprocess_progress_variant">In progress: %1$s…</string>
+    <string name="history_audio_reprocess_cancel_accessibility">Cancel retry: %1$s</string>
+    <string name="history_audio_reprocess_cancelling_accessibility">Cancelling: %1$s…</string>
+    <string name="history_audio_reprocess_in_progress">Reprocessing…</string>
+    <string name="history_audio_reprocess_vad_in_progress">Reprocessing with VAD…</string>
+    <string name="history_audio_reprocess_vad_model_required">Reprocessing with VAD requires Parakeet TDT v2 or v3. Select a compatible model in Settings.</string>
+    <string name="history_audio_reprocess_vad_explanation">This retry uses the live TDT VAD chunking policy and your current model and settings, including acoustic vocabulary settings. Boundaries may differ from the original if settings have changed. Before decoding, classified trailing silence is cut after the last positive 32 ms frame, without a 200 ms margin. If no complete frame is positive, trailing-edge trimming leaves the chunk intact; optional internal silence removal can still apply. An unclassified final partial frame is kept even if earlier silence is removed, which can create a discontinuity. VAD can cut quiet speech or word endings. If a chunk returns no text, the decoder retries it once with 0.001 feature dither unless the input would exceed the decoder limit. It keeps left context but omits right context when it would restore trimmed silence; no extra outer silence is added. Ordinary non-VAD reprocessing uses 100 ms of original context on both sides, zero-filled at recording edges, without outer silence. Context may be silence, and overlap may duplicate words. A retry can still fail or produce hallucinated words. The saved recording is unchanged. Parakeet TDT v2 or v3 is required. Extra on-device diagnostic comparisons can take longer and never change the transcript.</string>
+    <string name="history_vad_diagnostics_title">VAD retry diagnostics</string>
+    <string name="history_vad_diagnostics_ready">VAD diagnostics ready</string>
+    <string name="history_vad_diagnostics_privacy">May contain sensitive transcripts and timestamps. Kept in memory only, not saved or sent automatically. Copying puts them on the system clipboard, where apps or pasted destinations may access them.</string>
+    <string name="history_vad_diagnostics_copy">Copy</string>
+    <string name="history_vad_diagnostics_show">Show details</string>
+    <string name="history_vad_diagnostics_hide">Hide details</string>
+    <string name="history_vad_diagnostics_copied">Diagnostics copied to clipboard</string>
     <string name="history_audio_reprocess_cancel">Cancel retry</string>
     <string name="history_audio_reprocessing">Cancelling…</string>
     <string name="history_audio_unavailable">Audio unavailable</string>
@@ -131,7 +157,7 @@
     <string name="history_audio_reprocess_done">Transcript reprocessed and updated.</string>
     <string name="history_audio_reprocess_failed">Reprocessing failed; the existing transcript was kept.</string>
     <string name="history_audio_reprocess_confirm">This will decode the saved recording again on-device with your currently selected model and replace this History transcript. No text or audio is sent to a server. The original audio is kept. Continue?</string>
-    <string name="history_audio_reprocess_polish_warning">This will decode the saved recording again and replace this History transcript; the original audio is kept. AI polishing is enabled. If you continue, the configured system prompt, resulting transcript, and your personal vocabulary (%3$d terms) will be sent as text to %1$s using model %2$s. Audio stays on this device. This retry will not be redirected if server settings change.</string>
+    <string name="history_audio_reprocess_polish_warning">This will decode the saved recording again and replace this History transcript; the original audio is kept. AI polishing is enabled. If you continue, the configured system prompt, fixed input/output instructions, resulting transcript chunks, and your personal vocabulary (%3$d terms) will be sent as text to %1$s using model %2$s. Audio stays on this device. This retry will not be redirected if server settings change.</string>
     <string name="history_audio_error">Could not play the saved audio.</string>
     <string name="btn_clear_history">Clear History</string>
     <string name="empty_history">No transcriptions recorded yet. Focus any text field across the system and tap the floating dictation button.</string>

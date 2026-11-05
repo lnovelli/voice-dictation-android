@@ -75,6 +75,20 @@ class SettingsFragment : Fragment() {
             if (!enabled) speechEngine.releaseEngine()
         }
         setupModelSelection()
+        binding.switchAlwaysTdtDither.isChecked = prefs.alwaysTdtDitherEnabled
+        binding.switchAlwaysTdtDither.setOnCheckedChangeListener { _, enabled ->
+            prefs.alwaysTdtDitherEnabled = enabled
+        }
+        binding.switchTdtVadChunking.isChecked = prefs.liveTdtVadChunkingEnabled
+        binding.switchTdtRemoveSilence.isChecked = prefs.liveTdtRemoveSilenceEnabled
+        binding.switchTdtRemoveSilence.setOnCheckedChangeListener { _, enabled ->
+            prefs.liveTdtRemoveSilenceEnabled = enabled
+        }
+        binding.switchTdtVadChunking.setOnCheckedChangeListener { _, enabled ->
+            prefs.liveTdtVadChunkingEnabled = enabled
+            updateVadControls()
+        }
+        updateVadControls()
         setupPermissions()
         setupSliders()
         setupFocusAndOverlayBehavior()
@@ -86,12 +100,13 @@ class SettingsFragment : Fragment() {
         super.onResume()
         updatePermissionsStatus()
         updateModelStatus()
+        updateVadControls()
     }
 
     private fun setupModelSelection() {
         when (prefs.selectedModelId) {
             AppPreferences.MODEL_PARAKEET_V3 -> binding.rbModelV3.isChecked = true
-            AppPreferences.MODEL_PARAKEET_UNIFIED_STREAMING -> binding.rbModelUnified.isChecked = true
+            AppPreferences.MODEL_NEMOTRON_STREAMING -> binding.rbModelNemotron.isChecked = true
             else -> binding.rbModelV2.isChecked = true
         }
 
@@ -99,11 +114,12 @@ class SettingsFragment : Fragment() {
             if (isDownloading) return@setOnCheckedChangeListener
             val selected = when (checkedId) {
                 R.id.rbModelV3 -> AppPreferences.MODEL_PARAKEET_V3
-                R.id.rbModelUnified -> AppPreferences.MODEL_PARAKEET_UNIFIED_STREAMING
+                R.id.rbModelNemotron -> AppPreferences.MODEL_NEMOTRON_STREAMING
                 else -> AppPreferences.MODEL_PARAKEET_V2
             }
             prefs.selectedModelId = selected
             updateModelStatus()
+            updateVadControls()
         }
 
         binding.btnDownloadModel.setOnClickListener {
@@ -128,6 +144,15 @@ class SettingsFragment : Fragment() {
         }
 
         updateModelStatus()
+    }
+
+    private fun updateVadControls() {
+        val tdtSelected = !ModelInfo.getModelById(prefs.selectedModelId).streaming
+        binding.switchTdtVadChunking.isEnabled = tdtSelected
+        binding.switchTdtRemoveSilence.isEnabled = tdtSelected && prefs.liveTdtVadChunkingEnabled
+        // Fixed text colors otherwise remain bright even while Android disables the controls.
+        binding.switchTdtVadChunking.alpha = if (tdtSelected) 1f else 0.5f
+        binding.switchTdtRemoveSilence.alpha = if (binding.switchTdtRemoveSilence.isEnabled) 1f else 0.5f
     }
 
     private fun updateModelStatus() {
@@ -156,7 +181,7 @@ class SettingsFragment : Fragment() {
         binding.rgModelSelection.isEnabled = false
         binding.rbModelV2.isEnabled = false
         binding.rbModelV3.isEnabled = false
-        binding.rbModelUnified.isEnabled = false
+        binding.rbModelNemotron.isEnabled = false
         binding.layoutDownloadProgress.visibility = View.VISIBLE
         binding.progressBarModel.progress = 0
         binding.tvProgressPercent.text = "Starting..."
@@ -177,7 +202,7 @@ class SettingsFragment : Fragment() {
                 binding.rgModelSelection.isEnabled = true
                 binding.rbModelV2.isEnabled = true
                 binding.rbModelV3.isEnabled = true
-                binding.rbModelUnified.isEnabled = true
+                binding.rbModelNemotron.isEnabled = true
 
                 if (result.isSuccess) {
                     Toast.makeText(requireContext(), "${model.displayName} downloaded successfully!", Toast.LENGTH_LONG).show()
@@ -255,6 +280,20 @@ class SettingsFragment : Fragment() {
     }
 
     private fun setupSliders() {
+        binding.sliderAsrThreads.value = prefs.asrThreadCount.toFloat()
+        fun updateAsrThreadsLabel(count: Int) {
+            val label = getString(R.string.asr_threads_value, count)
+            binding.tvAsrThreadsLabel.text = label
+            binding.sliderAsrThreads.contentDescription = label
+        }
+        updateAsrThreadsLabel(prefs.asrThreadCount)
+        binding.sliderAsrThreads.setLabelFormatter { it.toInt().toString() }
+        binding.sliderAsrThreads.addOnChangeListener { _, value, fromUser ->
+            val count = value.toInt()
+            if (fromUser) prefs.asrThreadCount = count
+            updateAsrThreadsLabel(count)
+        }
+
         // Retention limit
         binding.sliderHistoryLimit.value = prefs.historyLimit.toFloat()
         binding.tvHistoryLimitLabel.text = "History retention limit: ${prefs.historyLimit} transcriptions"

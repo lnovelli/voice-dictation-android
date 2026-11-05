@@ -2,10 +2,13 @@ package com.ludo.voicedictation.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ClipDescription
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.os.Bundle
+import android.os.Build
+import android.os.PersistableBundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -17,10 +20,12 @@ import com.ludo.voicedictation.R
 import com.ludo.voicedictation.data.AppPreferences
 import com.ludo.voicedictation.data.HistoryAudioStore
 import com.ludo.voicedictation.data.HistoryItem
+import com.ludo.voicedictation.asr.HistoryVadMode
 import com.ludo.voicedictation.asr.SpeechEngine
 import com.ludo.voicedictation.asr.TranscriptPolisher
 import com.ludo.voicedictation.asr.TranscriptPolishingConfiguration
 import com.ludo.voicedictation.databinding.TabHistoryBinding
+import com.ludo.voicedictation.model.ModelInfo
 import java.lang.ref.WeakReference
 
 class HistoryFragment : Fragment() {
@@ -35,6 +40,10 @@ class HistoryFragment : Fragment() {
     private val reprocessOwner = Any()
     private var reprocessingItemId: String? = null
     private var reprocessCancelling = false
+    private var reprocessVadMode: HistoryVadMode? = null
+    // Deliberately fragment-scoped: never persist raw diagnostic text in saved state.
+    private val vadDiagnostics = mutableMapOf<String, String>()
+    private var fragmentDestroyed = false
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -72,16 +81,29 @@ class HistoryFragment : Fragment() {
                 if (playingAudioItemId == item.id) stopAudioPlayback()
                 if (reprocessingItemId == item.id) cancelAudioReprocess()
                 prefs.removeHistoryItem(item.id)
+                vadDiagnostics.remove(item.id)
                 refreshList()
                 Toast.makeText(requireContext(), "Transcription and recording deleted", Toast.LENGTH_SHORT).show()
             },
             onPlayAudioClicked = ::toggleAudioPlayback,
             onReprocessAudioClicked = ::requestAudioReprocess,
+            onCopyDiagnosticsClicked = { diagnostics ->
+                val clipboard = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = ClipData.newPlainText(getString(R.string.history_vad_diagnostics_title), diagnostics)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    clip.description.extras = PersistableBundle().apply {
+                        putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                    }
+                }
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(requireContext(), R.string.history_vad_diagnostics_copied, Toast.LENGTH_SHORT).show()
+            },
             hasAudio = { item -> HistoryAudioStore.find(requireContext(), item.audioFileName) != null }
         )
 
         binding.rvHistory.layoutManager = LinearLayoutManager(requireContext())
         binding.rvHistory.adapter = adapter
+        adapter.setReprocessingItemId(reprocessingItemId, reprocessCancelling, reprocessVadMode)
     }
 
     private fun setupClearHistory() {
@@ -96,6 +118,7 @@ class HistoryFragment : Fragment() {
                     stopAudioPlayback()
                     if (reprocessingItemId != null) cancelAudioReprocess()
                     prefs.clearHistory()
+                    vadDiagnostics.clear()
                     refreshList()
                     Toast.makeText(requireContext(), "History and recordings cleared", Toast.LENGTH_SHORT).show()
                 }
@@ -154,9 +177,13 @@ class HistoryFragment : Fragment() {
         }
     }
 
-    private fun requestAudioReprocess(item: HistoryItem) {
+    private fun requestAudioReprocess(item: HistoryItem, mode: HistoryVadMode?) {
         if (reprocessingItemId != null) {
-            if (reprocessingItemId == item.id) cancelAudioReprocess()
+            if (reprocessingItemId == item.id && reprocessVadMode == mode) cancelAudioReprocess()
+            return
+        }
+        if (mode != null && !isVadReprocessModelSupported()) {
+            Toast.makeText(requireContext(), R.string.history_audio_reprocess_vad_model_required, Toast.LENGTH_LONG).show()
             return
         }
         val polishingConfiguration = if (prefs.transcriptPolishingEnabled) {
@@ -175,11 +202,25 @@ class HistoryFragment : Fragment() {
                 polishingConfiguration.vocabulary.size
             )
         } else getString(R.string.history_audio_reprocess_confirm)
+        val action = when (mode) {
+            null -> R.string.history_audio_reprocess
+            HistoryVadMode.STANDARD -> R.string.history_audio_reprocess_vad
+            HistoryVadMode.REMOVE_SILENCE -> R.string.history_audio_reprocess_vad_remove_silence
+        }
+        val variantExplanation = when (mode) {
+            HistoryVadMode.REMOVE_SILENCE -> getString(R.string.history_audio_reprocess_vad_remove_silence_explanation)
+            else -> null
+        }
+        val confirmation = listOfNotNull(
+            if (mode != null) getString(R.string.history_audio_reprocess_vad_explanation) else null,
+            variantExplanation,
+            message
+        ).joinToString("\n\n")
         MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.history_audio_reprocess)
-            .setMessage(message)
+            .setTitle(action)
+            .setMessage(confirmation)
             .setPositiveButton(R.string.history_audio_reprocess) { _, _ ->
-                beginAudioReprocess(item, polishingConfiguration)
+                beginAudioReprocess(item, polishingConfiguration, mode)
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
@@ -187,8 +228,14 @@ class HistoryFragment : Fragment() {
 
     private fun beginAudioReprocess(
         item: HistoryItem,
-        polishingConfiguration: TranscriptPolishingConfiguration?
+        polishingConfiguration: TranscriptPolishingConfiguration?,
+        mode: HistoryVadMode?
     ) {
+        if (reprocessingItemId != null) return
+        if (mode != null && !isVadReprocessModelSupported()) {
+            Toast.makeText(requireContext(), R.string.history_audio_reprocess_vad_model_required, Toast.LENGTH_LONG).show()
+            return
+        }
         val audioFileName = item.audioFileName
         if (audioFileName == null || HistoryAudioStore.find(requireContext(), audioFileName) == null) {
             Toast.makeText(requireContext(), R.string.history_audio_unavailable, Toast.LENGTH_SHORT).show()
@@ -196,14 +243,23 @@ class HistoryFragment : Fragment() {
             return
         }
         stopAudioPlayback()
+        if (mode != null) {
+            vadDiagnostics.remove(item.id)
+            refreshList()
+        }
         reprocessingItemId = item.id
         reprocessCancelling = false
-        adapter.setReprocessingItemId(item.id)
+        reprocessVadMode = mode
+        adapter.setReprocessingItemId(item.id, mode = mode)
 
         val preferences = prefs
         val fragment = WeakReference(this)
         val listener = object : SpeechEngine.ExternalListener {
             override fun onState(state: String) = Unit
+
+            override fun onHistoryVadDiagnostics(diagnostics: String) {
+                fragment.get()?.receiveVadDiagnostics(item.id, diagnostics)
+            }
 
             override fun onFinished(text: String?, error: String?) {
                 val updated = text?.let { preferences.updateHistoryTranscript(item.id, it) } == true
@@ -215,20 +271,37 @@ class HistoryFragment : Fragment() {
                 reprocessOwner,
                 audioFileName,
                 listener,
-                authorizedPolishing
+                authorizedPolishing,
+                useVad = mode != null,
+                vadMode = mode ?: HistoryVadMode.STANDARD
             )) {
             reprocessingItemId = null
             reprocessCancelling = false
+            reprocessVadMode = null
             adapter.setReprocessingItemId(null)
             Toast.makeText(requireContext(), R.string.history_audio_reprocess_unavailable, Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun receiveVadDiagnostics(itemId: String, diagnostics: String) {
+        // Callbacks run on the main thread. A retry may finish after a row was deleted or trimmed.
+        if (fragmentDestroyed || reprocessCancelling || reprocessingItemId != itemId || reprocessVadMode == null ||
+            prefs.getHistory().none { it.id == itemId }) return
+        vadDiagnostics[itemId] = diagnostics
+        if (_binding != null && isAdded) refreshList()
     }
 
     private fun cancelAudioReprocess() {
         val itemId = reprocessingItemId ?: return
         if (reprocessCancelling) return
         reprocessCancelling = true
-        adapter.setReprocessingItemId(itemId, cancelling = true)
+        if (reprocessVadMode != null) {
+            vadDiagnostics.remove(itemId)
+            if (_binding != null && isAdded) refreshList()
+        }
+        if (::adapter.isInitialized && _binding != null) {
+            adapter.setReprocessingItemId(itemId, cancelling = true, mode = reprocessVadMode)
+        }
         SpeechEngine.getInstance(requireContext()).cancelHistoryReprocess(reprocessOwner)
     }
 
@@ -236,6 +309,7 @@ class HistoryFragment : Fragment() {
         if (reprocessingItemId == itemId) {
             reprocessingItemId = null
             reprocessCancelling = false
+            reprocessVadMode = null
             if (::adapter.isInitialized && _binding != null) adapter.setReprocessingItemId(null)
         }
         if (_binding != null && isAdded) {
@@ -248,6 +322,11 @@ class HistoryFragment : Fragment() {
             message?.let { Toast.makeText(requireContext(), it, Toast.LENGTH_LONG).show() }
             if (::adapter.isInitialized) refreshList()
         }
+    }
+
+    private fun isVadReprocessModelSupported(): Boolean {
+        val modelId = ModelInfo.getModelById(prefs.selectedModelId).id
+        return modelId == AppPreferences.MODEL_PARAKEET_V2 || modelId == AppPreferences.MODEL_PARAKEET_V3
     }
 
     private fun finishAudioPlayback(player: MediaPlayer) {
@@ -280,10 +359,12 @@ class HistoryFragment : Fragment() {
 
     private fun refreshList() {
         val history = prefs.getHistory()
+        val historyIds = history.map { it.id }.toSet()
+        vadDiagnostics.keys.retainAll(historyIds)
         if (playingAudioItemId != null && history.none { it.id == playingAudioItemId }) {
             stopAudioPlayback()
         }
-        adapter.updateItems(history)
+        adapter.updateItems(history, vadDiagnostics)
         binding.tvHistoryHeader.text = "Transcription History (${history.size}/${prefs.historyLimit})"
 
         if (history.isEmpty()) {
@@ -304,7 +385,18 @@ class HistoryFragment : Fragment() {
 
     override fun onDestroyView() {
         stopAudioPlayback()
+        binding.rvHistory.adapter = null
+        if (::adapter.isInitialized) adapter.updateItems(emptyList(), emptyMap())
         _binding = null
         super.onDestroyView()
+    }
+
+    override fun onDestroy() {
+        // The owner token is fragment-scoped; do not leave an uncancellable retry behind.
+        fragmentDestroyed = true
+        vadDiagnostics.clear()
+        if (::adapter.isInitialized) adapter.updateItems(emptyList(), emptyMap())
+        if (reprocessingItemId != null) cancelAudioReprocess()
+        super.onDestroy()
     }
 }

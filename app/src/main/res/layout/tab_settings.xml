@@ -83,22 +83,101 @@
                     android:layout_marginBottom="12dp" />
 
                 <RadioButton
-                    android:id="@+id/rbModelUnified"
+                    android:id="@+id/rbModelNemotron"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/model_parakeet_unified"
+                    android:text="@string/model_nemotron_streaming"
                     android:textColor="@color/text_primary"
                     android:textSize="15sp" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/model_parakeet_unified_desc"
+                    android:text="@string/model_nemotron_streaming_desc"
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp"
                     android:layout_marginStart="32dp"
                     android:layout_marginBottom="12dp" />
             </RadioGroup>
+
+            <TextView
+                android:id="@+id/tvAsrThreadsLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:labelFor="@id/sliderAsrThreads"
+                android:text="@string/asr_threads_title"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <com.google.android.material.slider.Slider
+                android:id="@+id/sliderAsrThreads"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:valueFrom="2"
+                android:valueTo="4"
+                android:stepSize="1"
+                android:value="2"
+                android:contentDescription="@string/asr_threads_title"
+                app:thumbColor="@color/accent"
+                app:trackColorActive="@color/accent"
+                app:trackColorInactive="@color/surface_variant_dark" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/asr_threads_hint"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:layout_marginBottom="8dp" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchAlwaysTdtDither"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="48dp"
+                android:text="@string/always_tdt_dither_label"
+                android:textColor="@color/text_primary" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/always_tdt_dither_description"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:layout_marginBottom="8dp" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchTdtVadChunking"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="48dp"
+                android:text="@string/tdt_vad_chunking_label"
+                android:textColor="@color/text_primary" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/tdt_vad_chunking_description"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:layout_marginBottom="8dp" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchTdtRemoveSilence"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="48dp"
+                android:enabled="false"
+                android:text="@string/tdt_remove_silence_label"
+                android:textColor="@color/text_primary" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/tdt_remove_silence_description"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:layout_marginBottom="8dp" />
 
             <!-- Model Status -->
             <LinearLayout

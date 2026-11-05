@@ -26,8 +26,8 @@
 
         <ImageButton
             android:id="@+id/btnCopyHistory"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@drawable/ic_copy"
             app:tint="@color/text_secondary"
@@ -35,8 +35,8 @@
 
         <ImageButton
             android:id="@+id/btnDeleteHistory"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@drawable/ic_delete"
             app:tint="@color/text_secondary"
@@ -54,27 +54,108 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
+        android:orientation="vertical"
         android:layout_marginTop="8dp">
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnPlayHistoryAudio"
             style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="0dp"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginEnd="6dp"
             android:text="@string/history_audio_play" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnReprocessHistoryAudio"
             style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="0dp"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="6dp"
+            android:layout_marginTop="4dp"
             android:text="@string/history_audio_reprocess" />
 
+    </LinearLayout>
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnReprocessHistoryAudioVad"
+        style="@style/Widget.Material3.Button.OutlinedButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:singleLine="false"
+        android:text="@string/history_audio_reprocess_vad" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnReprocessHistoryAudioVadRemoveSilence"
+        style="@style/Widget.Material3.Button.OutlinedButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:singleLine="false"
+        android:text="@string/history_audio_reprocess_vad_remove_silence" />
+
+    <TextView
+        android:id="@+id/tvHistoryReprocessStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:accessibilityLiveRegion="polite"
+        android:textColor="@color/text_secondary"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/historyVadDiagnosticsSection"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:accessibilityLiveRegion="polite"
+            android:text="@string/history_vad_diagnostics_ready"
+            android:textColor="@color/text_primary"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/history_vad_diagnostics_privacy"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:orientation="vertical">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnCopyHistoryVadDiagnostics"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/history_vad_diagnostics_copy" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnToggleHistoryVadDiagnostics"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/history_vad_diagnostics_show" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvHistoryVadDiagnostics"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:saveEnabled="false"
+            android:textColor="@color/text_primary"
+            android:textIsSelectable="true"
+            android:textSize="12sp"
+            android:visibility="gone" />
     </LinearLayout>
 
 </LinearLayout>

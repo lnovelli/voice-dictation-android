@@ -4,6 +4,7 @@ import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
+import android.app.AlertDialog
 import android.content.Context
 import android.content.ComponentCallbacks
 import android.content.res.Configuration
@@ -26,6 +27,7 @@ import android.widget.ProgressBar
 import android.widget.Toast
 import com.ludo.voicedictation.R
 import com.ludo.voicedictation.asr.SpeechEngine
+import com.ludo.voicedictation.asr.MicrophoneDevices
 import com.ludo.voicedictation.data.AppPreferences
 import kotlin.math.abs
 
@@ -33,6 +35,7 @@ class OverlayManager(private val context: Context) {
 
     companion object {
         private const val TAG = "OverlayManager"
+        private const val MICROPHONE_HOLD_MS = 1500L
 
         @Volatile
         private var instance: OverlayManager? = null
@@ -55,6 +58,7 @@ class OverlayManager(private val context: Context) {
     private var positionIsLandscape = context.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     private var pulseAnimator: ObjectAnimator? = null
     private var cancelGesture: (() -> Unit)? = null
+    private var microphoneDialog: AlertDialog? = null
     private val configurationCallbacks = object : ComponentCallbacks {
         override fun onConfigurationChanged(newConfig: Configuration) {
             overlayView?.post { refreshAppearance() }
@@ -68,6 +72,7 @@ class OverlayManager(private val context: Context) {
 
     init {
         speechEngine.onStateChanged = { recording, processing ->
+            if (recording || processing) microphoneDialog?.dismiss()
             if (speechEngine.isExternalSessionActive && canShowExternalStatus()) show()
             else updateOverlayVisuals(recording, processing)
             if (!recording && !processing) {
@@ -76,6 +81,10 @@ class OverlayManager(private val context: Context) {
             }
         }
         speechEngine.onSpeechActivityChanged = {
+            if (speechEngine.isExternalSessionActive && canShowExternalStatus()) show()
+            else updateOverlayVisuals(speechEngine.isRecording, speechEngine.isProcessing)
+        }
+        speechEngine.onChunkProcessingChanged = {
             if (speechEngine.isExternalSessionActive && canShowExternalStatus()) show()
             else updateOverlayVisuals(speechEngine.isRecording, speechEngine.isProcessing)
         }
@@ -148,6 +157,7 @@ class OverlayManager(private val context: Context) {
     /** Hides only the floating view while another app/system surface is active; capture ownership is unchanged. */
     fun hideTemporarily() {
         cancelGesture?.invoke()
+        microphoneDialog?.dismiss()
         pulseAnimator?.cancel()
         overlayView?.keepScreenOn = false
         overlayView?.visibility = View.GONE
@@ -304,11 +314,17 @@ class OverlayManager(private val context: Context) {
         var isDragging = false
         var touchActive = false
         var consumeRelease = false
+        var holdWasDiscard = false
         val hold = Runnable {
             if (touchActive && !isDragging && !consumeRelease) {
-                // Consume UP even though cancellation may immediately make the engine idle.
+                // Never reinterpret a hold if ownership changed while the finger was down.
                 consumeRelease = true
-                root.performLongClick()
+                val discardNow = speechEngine.isLocalSessionActive &&
+                    (speechEngine.isRecording || speechEngine.isProcessing) &&
+                    !speechEngine.isExternalSessionActive
+                if ((holdWasDiscard && discardNow) || (!holdWasDiscard && !speechEngine.isBusy)) {
+                    root.performLongClick()
+                }
             }
         }
         cancelGesture = {
@@ -331,6 +347,10 @@ class OverlayManager(private val context: Context) {
                 root.announceForAccessibility("Dictation discarded")
                 Toast.makeText(context, "Dictation discarded", Toast.LENGTH_SHORT).show()
                 true
+            } else if (!speechEngine.isBusy) {
+                root.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                showMicrophoneChooser()
+                true
             } else false
         }
         root.setOnTouchListener { _, event ->
@@ -344,10 +364,13 @@ class OverlayManager(private val context: Context) {
                     isDragging = false
                     touchActive = true
                     consumeRelease = false
-                    if (speechEngine.isLocalSessionActive &&
+                    holdWasDiscard = speechEngine.isLocalSessionActive &&
                         (speechEngine.isRecording || speechEngine.isProcessing) &&
-                        !speechEngine.isExternalSessionActive) {
+                        !speechEngine.isExternalSessionActive
+                    if (holdWasDiscard) {
                         root.postDelayed(hold, ViewConfiguration.getLongPressTimeout().toLong())
+                    } else if (!speechEngine.isBusy) {
+                        root.postDelayed(hold, MICROPHONE_HOLD_MS)
                     }
                     true
                 }
@@ -395,6 +418,72 @@ class OverlayManager(private val context: Context) {
         }
     }
 
+    /** A separate non-focusable overlay keeps the underlying editor's input focus intact. */
+    private fun showMicrophoneChooser() {
+        if (!isAttached || !hasOverlayPermission() || speechEngine.isBusy || microphoneDialog != null) return
+        val choices = try {
+            MicrophoneDevices.available(context)
+        } catch (_: SecurityException) {
+            Toast.makeText(context, "Android denied microphone device discovery; System default remains available.", Toast.LENGTH_LONG).show()
+            emptyList()
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "Microphone device discovery failed", e)
+            Toast.makeText(context, "Microphone discovery failed; System default remains available.", Toast.LENGTH_LONG).show()
+            emptyList()
+        }
+        val selected = prefs.preferredMicrophone
+        val selectedIndex = if (selected == null) 0 else choices.indexOfFirst { it.unique && it.key == selected }
+            .let { if (it < 0) -1 else it + 1 }
+        val labels = arrayOf("System default (automatic)") + choices.map {
+            it.label + if (it.unique) "" else " (indistinguishable; unavailable)"
+        }
+        val title = "Microphone\nAndroid controls routing; device names may not uniquely identify replacements." +
+            if (selected != null && selectedIndex < 0) "\nSaved microphone is unavailable." else ""
+        val themed = ContextThemeWrapper(context, android.R.style.Theme_Material_Dialog_Alert)
+        val dialog = AlertDialog.Builder(themed)
+            .setTitle(title)
+            .setSingleChoiceItems(labels, selectedIndex) { dialogInterface, which ->
+                if (speechEngine.isBusy) {
+                    dialogInterface.dismiss()
+                } else if (which == 0) {
+                    val saved = prefs.persistPreferredMicrophone(null)
+                    dialogInterface.dismiss()
+                    Toast.makeText(context, if (saved) "Microphone: System default (automatic)"
+                        else "Could not save microphone preference for future sessions.", Toast.LENGTH_LONG).show()
+                } else {
+                    val choice = choices[which - 1]
+                    val stillAvailable = try {
+                        choice.unique && MicrophoneDevices.resolve(context, choice.key).id == choice.device.id
+                    } catch (_: Exception) { false }
+                    if (!stillAvailable) {
+                        dialogInterface.dismiss()
+                        Toast.makeText(context, "Microphone unavailable or indistinguishable. Open the list again.", Toast.LENGTH_LONG).show()
+                    } else {
+                        val saved = prefs.persistPreferredMicrophone(choice.key)
+                        dialogInterface.dismiss()
+                        Toast.makeText(context, if (saved) "Microphone preference saved; Android controls routing."
+                            else "Could not save microphone preference for future sessions.", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .create()
+        dialog.setOnDismissListener { if (microphoneDialog === dialog) microphoneDialog = null }
+        dialog.window?.apply {
+            setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+            addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
+        }
+        microphoneDialog = dialog
+        try {
+            dialog.show()
+            dialog.setCanceledOnTouchOutside(true)
+        } catch (e: RuntimeException) {
+            microphoneDialog = null
+            Log.w(TAG, "Could not display microphone chooser", e)
+            Toast.makeText(context, "Could not open microphone chooser.", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun onOverlayClicked() {
         if (!prefs.serviceEnabled || speechEngine.isExternalSessionActive) return
         if (speechEngine.currentStatus == "starting") {
@@ -424,6 +513,7 @@ class OverlayManager(private val context: Context) {
             externalSession && speechEngine.currentStatus == "processing" -> "Processing Hermes dictation"
             externalSession && speechEngine.currentStatus == "starting" -> "Starting Hermes dictation"
             externalSession && speechEngine.isAwaitingStop -> "Recording limit reached; stop or cancel in Hermes"
+            externalSession && isRecording && speechEngine.speechActivityDetectionDisabled -> "Recording controlled by Hermes; speech detection disabled for streaming"
             externalSession && isRecording && !speechEngine.speechActivityDetectionAvailable -> "Recording controlled by Hermes; speech detection unavailable"
             externalSession && isRecording && speechEngine.isSpeechDetected -> "Speech detected; recording controlled by Hermes"
             externalSession && isRecording -> "No speech detected; recording controlled by Hermes"
@@ -433,17 +523,24 @@ class OverlayManager(private val context: Context) {
             speechEngine.currentStatus == "loading" -> "Loading recognition model"
             isProcessing -> "Transcribing recording"
             speechEngine.isAwaitingStop -> "Recording limit reached. Tap to transcribe. Hold to discard."
+            isRecording && speechEngine.speechActivityDetectionDisabled -> "Recording. Speech detection disabled for streaming. Tap to stop; hold to discard."
             isRecording && !speechEngine.speechActivityDetectionAvailable -> "Recording. Speech detection unavailable. Tap to stop; hold to discard."
             isRecording && speechEngine.isSpeechDetected -> "Speech detected. Recording. Tap to stop; hold to discard."
             isRecording -> "Recording. Tap to stop and transcribe. Hold to discard."
-            else -> "Ready to record"
+            else -> "Ready to record. Hold for microphone selection."
         }
+        root.contentDescription = if (isRecording && !externalSession && speechEngine.isChunkProcessing) {
+            "${root.contentDescription} Transcribing a chunk."
+        } else root.contentDescription
         root.keepScreenOn = (isRecording || isProcessing) && !speechEngine.isExternalSessionActive &&
             root.visibility == View.VISIBLE
         val btnCircle = root.findViewById<FrameLayout>(R.id.btnOverlayCircle) ?: return
         val ivIcon = root.findViewById<ImageView>(R.id.ivOverlayIcon) ?: return
         val pbProcessing = root.findViewById<ProgressBar>(R.id.pbOverlayProcessing) ?: return
         val pulseRing = root.findViewById<View>(R.id.pulseRing) ?: return
+        ivIcon.imageTintList = context.getColorStateList(
+            if (isRecording && !externalSession && speechEngine.isChunkProcessing) R.color.accent else android.R.color.white
+        )
         pbProcessing.indeterminateTintList = context.getColorStateList(
             if (speechEngine.currentStatus == "polishing") R.color.success else R.color.accent
         )
@@ -505,6 +602,7 @@ class OverlayManager(private val context: Context) {
 
     fun destroy() {
         cancelGesture?.invoke()
+        microphoneDialog?.dismiss()
         persistOverlayPositionIfNeeded()
         cancelGesture = null
         if (overlayView != null) context.unregisterComponentCallbacks(configurationCallbacks)

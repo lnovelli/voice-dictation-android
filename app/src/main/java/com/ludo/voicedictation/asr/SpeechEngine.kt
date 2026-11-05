@@ -10,13 +10,16 @@ import android.media.MediaRecorder
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.system.Os
 import android.system.OsConstants
 import android.util.Log
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.k2fsa.sherpa.onnx.*
 import com.ludo.voicedictation.data.AppPreferences
 import com.ludo.voicedictation.data.HistoryAudioStore
+import com.ludo.voicedictation.data.RecordingLimits
 import com.ludo.voicedictation.model.ModelInfo
 import com.ludo.voicedictation.model.ModelManager
 import kotlinx.coroutines.*
@@ -24,18 +27,26 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
+import java.util.Locale
+
+internal enum class HistoryVadMode { STANDARD, REMOVE_SILENCE }
 
 class SpeechEngine private constructor(private val context: Context) {
     companion object {
         private const val TAG = "SpeechEngine"
-        private const val SAMPLE_RATE = 16000
+        private const val SAMPLE_RATE = RecordingLimits.SAMPLE_RATE
         private const val MAX_FILE_BYTES = 3_840_000L // Completed-file IPC input is limited to 120 seconds.
         private const val CAPTURE_READ_SAMPLES = 1024
         // Batch PCM into half-second queue items; size the queue for the full bounded capture.
         private const val STREAM_CHUNK_SAMPLES = SAMPLE_RATE / 2
-        private const val MAX_LIVE_SAMPLES = SAMPLE_RATE * 600 // 10 minutes of mono PCM16 capture.
+        // NeMo's 1120 ms encoder needs a complete final chunk plus right context.
+        // Padding is decoder-only; captured/history PCM is never modified.
+        private const val NEMOTRON_LEFT_PADDING_SAMPLES = SAMPLE_RATE / 2
+        private const val NEMOTRON_TAIL_PADDING_SAMPLES = SAMPLE_RATE * 128 / 100
+        private const val MAX_LIVE_SAMPLES = RecordingLimits.MAX_LIVE_SAMPLES // 10 minutes of mono PCM16 capture.
+        // A retry adds at most 100 ms context on each side.
+        private const val MAX_DECODER_SAMPLES = MAX_LIVE_SAMPLES + TdtEmptyRetry.EXTRA_SAMPLES
         private const val VAD_FRAME_SAMPLES = 512
-        private const val MIN_TDT_CHUNK_SPEECH_SAMPLES = SAMPLE_RATE * 5
         private const val RAW_PCM_QUEUE_CAPACITY = MAX_LIVE_SAMPLES / CAPTURE_READ_SAMPLES + 2
         private const val TDT_CHUNK_QUEUE_CAPACITY = MAX_LIVE_SAMPLES / VAD_FRAME_SAMPLES + 2
         private const val STOP_DRAIN_TIMEOUT_MS = 200L
@@ -49,6 +60,8 @@ class SpeechEngine private constructor(private val context: Context) {
     /** All control methods and listener callbacks run on the main thread. */
     interface ExternalListener {
         fun onState(state: String)
+        // Local History-only diagnostic data. Never sent over IPC or logged.
+        fun onHistoryVadDiagnostics(diagnostics: String) = Unit
         // Called only after capture, final decode, native-lock and coroutine cleanup finish.
         // Both values are null when cancelled. Empty speech is reported as an error.
         fun onFinished(text: String?, error: String?)
@@ -61,12 +74,19 @@ class SpeechEngine private constructor(private val context: Context) {
         var modelId: String = AppPreferences.MODEL_PARAKEET_V2,
         val historyAudioInputFileName: String? = null,
         val historyReprocessOwner: Any? = null,
-        val historyPolishingConfiguration: TranscriptPolishingConfiguration? = null
+        val historyPolishingConfiguration: TranscriptPolishingConfiguration? = null,
+        val historyUseVad: Boolean = false,
+        val historyVadMode: HistoryVadMode = HistoryVadMode.STANDARD
     ) {
+        var preferredMicrophone: String? = null
+        var asrThreadCount = 2
+        var initialTdtDither = 0f
+        var liveTdtRemoveSilence = false
         val stopRequested = CompletableDeferred<Unit>()
         @Volatile var stopped = false
         @Volatile var cancelled = false
         var text: String? = null
+        var transcriptChunks: List<String>? = null
         var error: String? = null
         var historyAudioFileName: String? = null
         var finalTextSettingsCaptured = false
@@ -75,6 +95,7 @@ class SpeechEngine private constructor(private val context: Context) {
         var finalPolishingAutoNumberSequences: Boolean? = null
         var finalPolishingConfiguration: TranscriptPolishingConfiguration? = null
         var acousticDecoderSettings: AcousticDecoderSettings? = null
+        val vadReport = if (historyUseVad) HistoryVadReport() else null
         @Volatile var stopDrainTimeout: Runnable? = null
 
         @Synchronized fun closeAudioFile() { runCatching { audioFile?.close() } }
@@ -82,10 +103,12 @@ class SpeechEngine private constructor(private val context: Context) {
 
     private data class DecoderConfigKey(
         val modelId: String,
+        val asrThreadCount: Int,
         val acousticBiasEnabled: Boolean,
         val maxActivePaths: Int,
         val hotwordsScore: Float,
-        val hotwords: List<String>
+        val hotwords: List<String>,
+        val dither: Float
     )
 
     private data class AcousticDecoderSettings(
@@ -105,10 +128,144 @@ class SpeechEngine private constructor(private val context: Context) {
         val sequence: Int,
         val samples: ShortArray,
         val startSample: Int,
-        val endExclusive: Int
+        val endExclusive: Int,
+        val skipSpeechlessTail: Boolean = false,
+        val boundaryReason: String = "end of recording",
+        val confirmedSpeechSamples: Int = 0,
+        val possibleSpeechSamples: Int = 0,
+        val liveNegativeRuns: List<HistoryNegativeRun> = emptyList(),
+        val trailingTrim: VadTrailingTrim.Plan
     )
 
-    private data class TdtCaptureResult(val samples: FloatArray, val text: String)
+    private data class HistoryVadChunk(
+        val start: Int,
+        val end: Int,
+        val reason: String,
+        val confirmedSpeechSamples: Int,
+        val possibleSpeechSamples: Int,
+        val result: String,
+        val tokens: String = "not available",
+        val inputSamples: Int? = null,
+        val retry: String = "not needed",
+        val trim: VadTrailingTrim.Plan,
+        val decoderEnd: Int?
+    )
+
+    private data class VadInterval(
+        val start: Int, var end: Int, val kind: String,
+        var minProbability: Float, var maxProbability: Float, var sumProbability: Double, var frames: Int
+    )
+
+    /** This report stays in memory and is shown only in the History UI on user request. */
+    private class HistoryVadReport {
+        var sampleCount = 0
+        var vadStatus = "not initialized"
+        var decoder = "not initialized"
+        var pipeline = "not completed"
+        var fallbackText: String? = null
+        var rawText: String? = null
+        var polishing = "not attempted"
+        val chunks = ArrayList<HistoryVadChunk>()
+        val intervals = ArrayList<VadInterval>()
+        var intervalsTruncated = false
+        var intervalCaptureError: String? = null
+        var lastTokenSeconds: Double? = null
+        var timestampsReliable = true
+        var displayedTokens = 0
+        var levels = "not calculated"
+        var baseline = "not attempted"
+        var isolated = "not attempted"
+
+        fun observe(update: SpeechActivityUpdate) {
+            val probability = update.probability ?: return
+            val kind = when {
+                update.confirmedSpeechInFrame -> "confirmed"
+                update.possibleSpeechInFrame -> "possible"
+                else -> return
+            }
+            val start = update.processedSamples - VAD_FRAME_SAMPLES
+            val last = intervals.lastOrNull()
+            if (last != null && last.end == start && last.kind == kind) {
+                last.end = update.processedSamples
+                last.minProbability = minOf(last.minProbability, probability)
+                last.maxProbability = maxOf(last.maxProbability, probability)
+                last.sumProbability += probability
+                last.frames++
+            } else if (intervals.size < 512) {
+                intervals += VadInterval(start, update.processedSamples, kind, probability, probability, probability.toDouble(), 1)
+            } else intervalsTruncated = true
+        }
+
+        fun tokenDetails(result: OfflineRecognizerResult, start: Int, end: Int): String {
+            val tokens = result.tokens
+            val times = result.timestamps
+            val duration = (end - start).toDouble() / SAMPLE_RATE
+            if (tokens.size != times.size || (tokens.isEmpty() && result.text.isNotBlank()) ||
+                times.any { !it.isFinite() || it < 0f || it.toDouble() > duration } ||
+                (1 until times.size).any { times[it] < times[it - 1] }) {
+                timestampsReliable = false
+                return "unavailable: invalid, missing, or inconsistent token/timestamp arrays"
+            }
+            if (tokens.isEmpty()) return "none"
+            lastTokenSeconds = start.toDouble() / SAMPLE_RATE + times.last().toDouble()
+            val remaining = (4096 - displayedTokens).coerceAtLeast(0)
+            val count = minOf(tokens.size, remaining, 512)
+            displayedTokens += count
+            val details = (0 until count).joinToString("; ") { i ->
+                val token = tokens[i].replace("\n", "\\n").replace("\r", "\\r")
+                String.format(Locale.ROOT, "%.3f %s", start.toDouble() / SAMPLE_RATE + times[i], token)
+            }
+            return details + if (count < tokens.size) "; <token display truncated>" else ""
+        }
+
+        fun format(current: Session): String = buildString {
+            fun time(samples: Int): String = String.format(Locale.ROOT, "%.3f", samples.toDouble() / SAMPLE_RATE)
+            appendLine("VAD reprocessing diagnostics (contains private transcript text)")
+            appendLine("Mode: ${current.historyVadMode}; REMOVE_SILENCE trims whole-recording runs of complete 32 ms frames with p < 0.5 lasting at least 200 ms, including across chunk boundaries. It retains the final 200 ms of each run, the first 200 ms of each chunk, and any unclassified final partial frame.")
+            appendLine("Model: ${current.modelId}; recognizer threads: ${current.asrThreadCount}; audio: ${time(sampleCount)} s; sample rate: $SAMPLE_RATE Hz")
+            appendLine("VAD: $vadStatus; decoder: $decoder; result: $pipeline")
+            appendLine("Polishing: $polishing; VAD counts use 32 ms frames and may include false positives/negatives.")
+            appendLine("TDT VAD chunks end at the last complete frame with raw p >= 0.5; quiet final speech can be cut. With no positive frame or incomplete VAD observations the original range is retained. An unclassified final partial frame is appended unchanged, potentially creating a discontinuity. Original recorded PCM is unchanged.")
+            appendLine("TDT initial dither=${current.initialTdtDither}; an empty output may be retried once with dither=${TdtEmptyRetry.DITHER}. With a trimmed tail: up to 100 ms original left context only, no right context or artificial zeros. Otherwise: 100 ms original context per side, zero-filled at recording boundaries. No extra outer silence. Context can duplicate words; correctness is not guaranteed.")
+            appendLine("Possible-speech counts use p >= 0.5; possible intervals also include active hysteresis frames. Final partial frame is not listed.")
+            appendLine("VAD intervals (complete 32 ms frames only; confirmed and possible are exclusive labels, probability min/mean/max):")
+            if (intervals.isEmpty()) appendLine("  none captured")
+            intervals.forEach { interval ->
+                appendLine(String.format(Locale.ROOT, "  %s–%s s %s p=%.3f/%.3f/%.3f",
+                    time(interval.start), time(interval.end), interval.kind, interval.minProbability,
+                    interval.sumProbability / interval.frames, interval.maxProbability))
+            }
+            if (intervalsTruncated) appendLine("  <interval list truncated at 512>")
+            if (intervalCaptureError != null) appendLine("  <interval capture failed: $intervalCaptureError>")
+            if (chunks.isEmpty()) appendLine("No chunks decoded.")
+            chunks.forEachIndexed { index, chunk ->
+                appendLine()
+                appendLine("Chunk ${index + 1}: ${time(chunk.start)}–${time(chunk.end)} s " +
+                    "(samples ${chunk.start}–${chunk.end}, end exclusive); boundary: ${chunk.reason}")
+                appendLine("VAD confirmed speech: ${time(chunk.confirmedSpeechSamples)} s; " +
+                    "possible speech: ${time(chunk.possibleSpeechSamples)} s")
+                appendLine("Raw ASR: ${chunk.result}")
+                if (chunk.inputSamples != null) appendLine("Decoder input: ${chunk.inputSamples} samples; original range: ${chunk.end - chunk.start} samples")
+                if (chunk.inputSamples != null) appendLine("Decoder prefix cutoff: ${time(chunk.trim.prefixEnd)} s (sample ${chunk.trim.prefixEnd}, end exclusive); dropped trailing-negative samples: ${chunk.trim.droppedSamples}; ${chunk.trim.reason}." +
+                    (if (chunk.trim.partialSamples > 0) " Appended unclassified original ${time(chunk.trim.partialStart)}–${time(chunk.trim.originalEnd)} s (${chunk.trim.partialSamples} samples); discontinuity=${chunk.trim.droppedSamples > 0}." else "") +
+                    " Actual decoder end: ${time(checkNotNull(chunk.decoderEnd))} s (sample ${chunk.decoderEnd}, end exclusive; before retry).")
+                appendLine("Empty-output retry: ${chunk.retry}")
+                val tokenLabel = if (current.historyVadMode == HistoryVadMode.STANDARD)
+                    "Token starts (approximate absolute seconds, not word ends)" else "Original-audio token starts"
+                appendLine("$tokenLabel: ${chunk.tokens}")
+            }
+            if (fallbackText != null) appendLine("\nFull-audio fallback ASR: $fallbackText")
+            if (rawText != null) appendLine("\nAssembled raw ASR: $rawText")
+            appendLine("\nAudio levels (original samples, dBFS):\n$levels")
+            appendLine("\nOrdinary History comparison (diagnostic only):\n$baseline")
+            appendLine("\nIsolated replay (diagnostic only; never merged into transcript):\n$isolated")
+            appendLine("\nFinal transcript: ${current.text?.takeIf { it.isNotBlank() } ?: "<empty>"}")
+            if (current.error != null) appendLine("Processing error: ${current.error}")
+        }
+    }
+
+    private data class TdtCaptureResult(val samples: FloatArray, val text: String, val chunks: List<String>? = null)
+    private data class DecodeResult(val text: String, val chunks: List<String>? = null)
 
     val isExternalSessionActive: Boolean get() = session?.let {
         it.owner != null && it.owner !== historyReprocessOwnerMarker
@@ -149,8 +306,18 @@ class SpeechEngine private constructor(private val context: Context) {
         private set
     @Volatile var speechActivityDetectionAvailable: Boolean = false
         private set
+    /** Live streaming deliberately skips speech detection; the active session snapshots its model. */
+    val speechActivityDetectionDisabled: Boolean
+        get() = session?.let {
+            it.audioFile == null && it.historyAudioInputFileName == null &&
+                ModelInfo.getModelById(it.modelId).streaming
+        } ?: false
+    /** True only while a live TDT chunk is actively being decoded during capture. */
+    @Volatile var isChunkProcessing: Boolean = false
+        private set
     var onStateChanged: ((Boolean, Boolean) -> Unit)? = null
     var onSpeechActivityChanged: (() -> Unit)? = null
+    var onChunkProcessingChanged: (() -> Unit)? = null
     var onRecordingLimit: (() -> Unit)? = null
     var onFinalResult: ((String) -> Unit)? = null
     var onError: ((String) -> Unit)? = null
@@ -169,13 +336,16 @@ class SpeechEngine private constructor(private val context: Context) {
         startSession(Session(owner, listener, audioFile))
 
     /** User-requested retry; results never reach overlay insertion or clipboard. */
-    fun startHistoryReprocess(
+    internal fun startHistoryReprocess(
         owner: Any,
         audioFileName: String,
         listener: ExternalListener,
-        polishingConfiguration: TranscriptPolishingConfiguration? = null
+        polishingConfiguration: TranscriptPolishingConfiguration? = null,
+        useVad: Boolean = false,
+        vadMode: HistoryVadMode = HistoryVadMode.STANDARD
     ): Boolean {
         check(Looper.myLooper() == Looper.getMainLooper())
+        require(useVad || vadMode == HistoryVadMode.STANDARD) { "Experimental modes require VAD." }
         if (!HistoryAudioStore.isSafeFileName(audioFileName) ||
             HistoryAudioStore.find(context, audioFileName) == null) return false
         return startSession(Session(
@@ -183,7 +353,9 @@ class SpeechEngine private constructor(private val context: Context) {
             listener = listener,
             historyAudioInputFileName = audioFileName,
             historyReprocessOwner = owner,
-            historyPolishingConfiguration = polishingConfiguration
+            historyPolishingConfiguration = polishingConfiguration,
+            historyUseVad = useVad,
+            historyVadMode = vadMode
         ))
     }
 
@@ -206,12 +378,21 @@ class SpeechEngine private constructor(private val context: Context) {
             return false
         }
         current.modelId = ModelInfo.getModelById(prefs.selectedModelId).id
+        current.asrThreadCount = prefs.asrThreadCount.coerceIn(2, 4)
+        current.initialTdtDither = if (prefs.alwaysTdtDitherEnabled) TdtEmptyRetry.DITHER else 0f
+        current.preferredMicrophone = prefs.preferredMicrophone
         val selectedModel = ModelInfo.getModelById(current.modelId)
         val isTdtModel = current.modelId == AppPreferences.MODEL_PARAKEET_V2 ||
             current.modelId == AppPreferences.MODEL_PARAKEET_V3
+        // Streaming never uses VAD. Do not silently run a different history algorithm.
+        if (current.historyUseVad && !isTdtModel) return false
         val liveTdt = isTdtModel && !selectedModel.streaming && current.audioFile == null &&
             current.historyAudioInputFileName == null
-        if (liveTdt) current.acousticDecoderSettings = snapshotAcousticDecoderSettings()
+        // Decide once per session, so settings changes cannot switch pipelines mid-capture.
+        val chunkLiveTdt = liveTdt && prefs.liveTdtVadChunkingEnabled
+        current.liveTdtRemoveSilence = chunkLiveTdt && prefs.liveTdtRemoveSilenceEnabled
+        if (liveTdt || current.historyUseVad) current.acousticDecoderSettings = snapshotAcousticDecoderSettings()
+        if (current.historyUseVad) snapshotFinalizationSettings(current)
         session = current
         // Keep the control active during mic startup, but expose a distinct not-yet-recording state.
         setState(!hasCompletedAudio, true, if (hasCompletedAudio) "loading" else "starting")
@@ -224,9 +405,19 @@ class SpeechEngine private constructor(private val context: Context) {
                     val capture = captureAndTranscribeStreaming(current)
                     current.text = capture.text
                     capture.samples
-                } else if (liveTdt) {
+                } else if (chunkLiveTdt) {
                     val capture = captureAndTranscribeTdtChunks(current)
                     current.text = capture.text
+                    current.transcriptChunks = capture.chunks
+                    capture.samples
+                } else if (current.historyUseVad) {
+                    val savedSamples = withContext(Dispatchers.IO) {
+                        HistoryAudioStore.readSamples(context, current.historyAudioInputFileName)
+                    }
+                    current.vadReport?.sampleCount = savedSamples.size
+                    val capture = captureAndTranscribeTdtChunks(current, savedSamples)
+                    current.text = capture.text
+                    current.transcriptChunks = capture.chunks
                     capture.samples
                 } else withContext(Dispatchers.IO) {
                     when {
@@ -239,14 +430,17 @@ class SpeechEngine private constructor(private val context: Context) {
                 if (!current.cancelled && prefs.serviceEnabled && samples.isNotEmpty()) {
                     if (current.text == null) {
                         setState(false, true, "loading")
-                        current.text = withContext(Dispatchers.Default) {
+                        val decoded = withContext(Dispatchers.Default) {
                             nativeLock.withLock {
-                                if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
-                                initializeEngine(
+                                if (current.cancelled || !prefs.serviceEnabled) return@withLock DecodeResult("")
+                                initializeEngine(current = current,
                                     forceUnbiased = current.historyAudioInputFileName != null,
-                                    modelId = current.modelId
+                                    modelId = current.modelId,
+                                    asrThreadCount = current.asrThreadCount,
+                                    deferTranscriptTransforms = current.finalTextSettingsCaptured,
+                                    decoderSettings = current.acousticDecoderSettings
                                 )
-                                if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
+                                if (current.cancelled || !prefs.serviceEnabled) return@withLock DecodeResult("")
                                 withContext(Dispatchers.Main) {
                                     if (!current.cancelled) setState(false, true, "processing")
                                 }
@@ -257,8 +451,11 @@ class SpeechEngine private constructor(private val context: Context) {
                                 )
                             }
                         }
+                        current.text = decoded.text
+                        current.transcriptChunks = decoded.chunks
                     }
                     val originalText = current.text.orEmpty()
+                    current.vadReport?.rawText = originalText.ifBlank { "<empty>" }
                     if (!current.cancelled && prefs.serviceEnabled && originalText.isNotBlank()) {
                         val preNumericText = stringReplacer.apply(spellingHints.apply(originalText))
                         val thresholdText = transcriptFilter.apply(preNumericText)
@@ -289,6 +486,12 @@ class SpeechEngine private constructor(private val context: Context) {
                         val polishingAllowed = polishingEnabled &&
                             (current.historyAudioInputFileName == null || current.historyPolishingConfiguration != null)
                         val shouldPolish = polishingThresholdMet || autoNumberPolishTriggered
+                        current.vadReport?.polishing = when {
+                            !polishingEnabled -> "disabled"
+                            !polishingAllowed || polishingConfiguration == null -> "not authorized"
+                            !shouldPolish -> "enabled but threshold not met"
+                            else -> "attempted"
+                        }
                         if (!current.cancelled && polishingAllowed && shouldPolish && polishingConfiguration != null) {
                             setState(false, true, "polishing")
                             val polishedText = transcriptPolisher.polish(
@@ -296,8 +499,10 @@ class SpeechEngine private constructor(private val context: Context) {
                                 model = polishingConfiguration.model,
                                 vocabulary = polishingConfiguration.vocabulary,
                                 transcript = originalText,
-                                systemPrompt = polishingConfiguration.systemPrompt
+                                systemPrompt = polishingConfiguration.systemPrompt,
+                                chunks = current.transcriptChunks
                             )
+                            current.vadReport?.polishing = if (polishedText == null) "failed; raw ASR retained" else "applied"
                             if (!current.cancelled) setState(false, true, "processing")
                             val stillEnabled = if (current.finalTextSettingsCaptured) {
                                 current.finalPolishingEnabled
@@ -323,6 +528,11 @@ class SpeechEngine private constructor(private val context: Context) {
                                 }
                             }
                         }
+                    }
+                    // The History-only comparison runs after the authoritative result is finalized.
+                    // It may change the cached native recognizer but never text/transforms or audio.
+                    if (current.vadReport != null && !current.cancelled && prefs.serviceEnabled) {
+                        collectHistoryDiagnostics(current, samples)
                     }
                 }
             } catch (e: Exception) {
@@ -360,6 +570,11 @@ class SpeechEngine private constructor(private val context: Context) {
                         !prefs.serviceEnabled -> "Dictation service is disabled."
                         text == null -> "Nothing was transcribed. Long quiet recordings can lose speech, especially with the multilingual model. Try a shorter recording."
                         else -> null
+                    }
+                    current.vadReport?.let { report ->
+                        // Diagnostics are advisory and must never prevent History delivery.
+                        runCatching { current.listener?.onHistoryVadDiagnostics(report.format(current)) }
+                            .onFailure { Log.w(TAG, "Could not display VAD diagnostics (${it.javaClass.simpleName})") }
                     }
                     if (error == null && text != null) {
                         // History reprocessing replaces the selected row through its listener;
@@ -420,6 +635,8 @@ class SpeechEngine private constructor(private val context: Context) {
 
     // All native creation, decoding and destruction run under nativeLock, never on the UI thread.
     private fun initializeEngine(
+        current: Session,
+        asrThreadCount: Int,
         forceUnbiased: Boolean = false,
         modelId: String = prefs.selectedModelId,
         deferTranscriptTransforms: Boolean = false,
@@ -442,13 +659,16 @@ class SpeechEngine private constructor(private val context: Context) {
         val useAcousticBias = safeHotwords.isNotEmpty()
         val configKey = DecoderConfigKey(
             modelId = model.id,
+            asrThreadCount = asrThreadCount,
             acousticBiasEnabled = useAcousticBias,
             maxActivePaths = if (useAcousticBias) decoderSettings?.maxActivePaths ?: prefs.acousticMaxActivePaths else 1,
             hotwordsScore = if (useAcousticBias) decoderSettings?.hotwordsScore ?: prefs.acousticHotwordsScore else 0f,
-            hotwords = safeHotwords
+            hotwords = safeHotwords,
+            dither = if (model.streaming) 0f else current.initialTdtDither
         )
         val recognizerLoaded = if (model.streaming) onlineRecognizer != null else recognizer != null
-        if (recognizerLoaded && loadedConfigKey == configKey) return
+        if (recognizerLoaded && loadedConfigKey == configKey &&
+            (model.streaming || recognizer?.config?.featConfig?.dither == configKey.dither)) return
 
         releaseNative()
         check(modelManager.isModelDownloaded(model)) { "Download the selected model in Settings." }
@@ -464,7 +684,7 @@ class SpeechEngine private constructor(private val context: Context) {
                             joiner = File(dir, model.joinerFileName).absolutePath
                         ),
                         tokens = File(dir, model.tokensFileName).absolutePath,
-                        numThreads = 2,
+                        numThreads = asrThreadCount,
                         provider = "cpu"
                     ),
                     // Keep one transcript across the recording; explicit Stop performs the flush.
@@ -472,13 +692,13 @@ class SpeechEngine private constructor(private val context: Context) {
                     decodingMethod = "greedy_search"
                 ))
                 loadedConfigKey = configKey
-                Log.i(TAG, "Loaded ${model.id}; buffered Parakeet Unified streaming greedy decoder")
+                Log.i(TAG, "Loaded ${model.id}; Nemotron streaming greedy decoder")
                 return
             }
             val bpeVocab = if (useAcousticBias) installBpeVocab(model) else null
             val hotwordsFile = if (useAcousticBias) writeHotwordsFile(safeHotwords) else ""
             recognizer = OfflineRecognizer(null, OfflineRecognizerConfig(
-                featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 128),
+                featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 128, dither = configKey.dither),
                 modelConfig = OfflineModelConfig(
                     transducer = OfflineTransducerModelConfig(
                         encoder = File(dir, model.encoderFileName).absolutePath,
@@ -486,7 +706,7 @@ class SpeechEngine private constructor(private val context: Context) {
                         joiner = File(dir, model.joinerFileName).absolutePath
                     ),
                     tokens = File(dir, model.tokensFileName).absolutePath,
-                    numThreads = 2,
+                    numThreads = asrThreadCount,
                     provider = "cpu",
                     modelType = "nemo_transducer",
                     modelingUnit = if (useAcousticBias) "bpe" else "",
@@ -594,9 +814,12 @@ class SpeechEngine private constructor(private val context: Context) {
 
     /**
      * Capture stays independent of both VAD and offline TDT JNI work. The raw-range queue holds
-     * descriptors into the fixed capture buffer and is sized for the complete 120-second cap.
+     * descriptors into the fixed capture buffer and is sized for the complete capture cap.
      */
-    private suspend fun captureAndTranscribeTdtChunks(current: Session): TdtCaptureResult =
+    private suspend fun captureAndTranscribeTdtChunks(
+        current: Session,
+        replaySamples: FloatArray? = null
+    ): TdtCaptureResult =
         withContext(Dispatchers.Default) {
             nativeLock.withLock {
                 if (current.cancelled || !prefs.serviceEnabled) {
@@ -605,6 +828,8 @@ class SpeechEngine private constructor(private val context: Context) {
                 coroutineScope {
                     val pcmInput = Channel<CapturedPcmRange>(RAW_PCM_QUEUE_CAPACITY)
                     val tdtChunks = Channel<TdtPcmChunk>(TDT_CHUNK_QUEUE_CAPACITY)
+                    val capturedProgress = CapturedAudioProgress()
+                    val historyNegativeRuns = HistoryNegativeRuns()
                     var segmentationFailure: Exception? = null
                     var decoderFailure: Exception? = null
                     var decodedChunkCount = 0
@@ -613,15 +838,19 @@ class SpeechEngine private constructor(private val context: Context) {
 
                     val segmenter = launch(Dispatchers.Default) {
                         try {
-                            segmentLiveTdtAudio(current, pcmInput, tdtChunks)
+                            segmentLiveTdtAudio(current, pcmInput, tdtChunks, historyNegativeRuns)
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
                             segmentationFailure = e
+                            current.vadReport?.vadStatus = "segmentation error: ${e.javaClass.simpleName}"
+                            if (current.liveTdtRemoveSilence) updateSpeechActivity(current, available = false, detected = false)
                             // Keep draining capture descriptors; full-recording decode will recover.
                             for (ignored in pcmInput) Unit
                         } catch (e: LinkageError) {
                             segmentationFailure = IllegalStateException("Silero VAD failed", e)
+                            current.vadReport?.vadStatus = "native segmentation error: ${e.javaClass.simpleName}"
+                            if (current.liveTdtRemoveSilence) updateSpeechActivity(current, available = false, detected = false)
                             for (ignored in pcmInput) Unit
                         } finally {
                             tdtChunks.close()
@@ -629,12 +858,28 @@ class SpeechEngine private constructor(private val context: Context) {
                     }
 
                     val decoder = launch(Dispatchers.Default) {
+                        // History removal needs full runs, including those spanning a chunk
+                        // boundary. The bounded queue can hold every frame-boundary chunk.
+                        val negativeRuns = if (current.historyVadMode == HistoryVadMode.REMOVE_SILENCE) {
+                            segmenter.join()
+                            historyNegativeRuns.drain()
+                        } else emptyList()
                         var expectedSequence = 0
                         var expectedStart = 0
                         var failure: Exception? = null
                         var initialized = false
                         for (chunk in tdtChunks) {
                             if (current.cancelled || !prefs.serviceEnabled) continue
+                            var tokenDetails = "not available"
+                            var inputSamples: Int? = null
+                            var decoderEnd: Int? = null
+                            var retryDetails = "not needed"
+                            fun recordDiagnostic(result: String) {
+                                current.vadReport?.chunks?.add(HistoryVadChunk(
+                                    chunk.startSample, chunk.endExclusive, chunk.boundaryReason,
+                                    chunk.confirmedSpeechSamples, chunk.possibleSpeechSamples, result, tokenDetails, inputSamples, retryDetails, chunk.trailingTrim, decoderEnd
+                                ))
+                            }
                             if (chunk.sequence != expectedSequence || chunk.startSample != expectedStart ||
                                 chunk.endExclusive <= chunk.startSample || chunk.endExclusive > chunk.samples.size) {
                                 failure = IllegalStateException("TDT chunk ranges are not contiguous and ordered.")
@@ -643,28 +888,100 @@ class SpeechEngine private constructor(private val context: Context) {
                             expectedStart = chunk.endExclusive
                             decodedChunkCount = expectedSequence
                             decodedEndSample = expectedStart
-                            if (failure != null) continue
+                            // Count the intentionally skipped tail in range coverage, but do not
+                            // pass it to the recognizer or remove it from the saved recording.
+                            if (failure != null || chunk.skipSpeechlessTail) {
+                                recordDiagnostic(if (failure != null) "<not decoded: earlier error>" else "<skipped short speechless tail>")
+                                continue
+                            }
                             try {
+                                val runs = when {
+                                    current.liveTdtRemoveSilence -> chunk.liveNegativeRuns
+                                    current.historyVadMode == HistoryVadMode.REMOVE_SILENCE -> negativeRuns
+                                    else -> null
+                                }
+                                val floatChunk = VadTrailingTrim.input(chunk.samples, chunk.startSample, chunk.trailingTrim, runs, SAMPLE_RATE)
+                                inputSamples = floatChunk.size
+                                decoderEnd = VadTrailingTrim.decoderEnd(chunk.startSample, chunk.trailingTrim, runs, SAMPLE_RATE)
+                                Log.i(TAG, "TDT VAD original=${chunk.startSample}..${chunk.endExclusive}, decoder end=$decoderEnd, dropped trailing=${chunk.trailingTrim.droppedSamples}, partial=${chunk.trailingTrim.partialSamples}; ${chunk.trailingTrim.reason}; quiet final speech can be cut")
+                                if (current.historyVadMode != HistoryVadMode.STANDARD ||
+                                    (chunk.trailingTrim.droppedSamples > 0 && chunk.trailingTrim.partialSamples > 0)) {
+                                    current.vadReport?.timestampsReliable = false
+                                    tokenDetails = "unavailable: transformed input does not provide reliable original-audio timestamps"
+                                }
+                                if (floatChunk.isEmpty()) {
+                                    recordDiagnostic("<all samples removed; no decoder input>")
+                                    continue
+                                }
+                                if (current.cancelled || !prefs.serviceEnabled) continue
                                 if (!initialized) {
-                                    initializeEngine(
+                                    initializeEngine(current = current,
                                         modelId = current.modelId,
+                                        asrThreadCount = current.asrThreadCount,
                                         deferTranscriptTransforms = true,
                                         decoderSettings = current.acousticDecoderSettings
                                     )
                                     initialized = true
+                                    current.vadReport?.decoder = loadedConfigKey?.let {
+                                        if (it.acousticBiasEnabled) "modified beam, acoustic bias enabled, paths=${it.maxActivePaths}, score=${it.hotwordsScore}"
+                                        else "greedy, acoustic bias off"
+                                    } ?: "unknown"
                                 }
-                                val floatChunk = FloatArray(chunk.endExclusive - chunk.startSample) { index ->
-                                    chunk.samples[chunk.startSample + index] / 32768f
+                                postChunkProcessing(current, true)
+                                var text = try {
+                                    decode(floatChunk, current, if (current.vadReport == null) null else { result ->
+                                        try {
+                                            if (current.historyVadMode == HistoryVadMode.STANDARD &&
+                                                !(chunk.trailingTrim.droppedSamples > 0 && chunk.trailingTrim.partialSamples > 0)) {
+                                                tokenDetails = current.vadReport.tokenDetails(result, chunk.startSample, checkNotNull(decoderEnd))
+                                            }
+                                        } catch (e: Exception) {
+                                            current.vadReport.timestampsReliable = false
+                                            tokenDetails = "unavailable: ${e.javaClass.simpleName}"
+                                        } catch (e: LinkageError) {
+                                            current.vadReport.timestampsReliable = false
+                                            tokenDetails = "unavailable: ${e.javaClass.simpleName}"
+                                        }
+                                    }).trim()
+                                } finally {
+                                    postChunkProcessing(current, false)
                                 }
-                                val text = decode(floatChunk, current).trim()
+                                // Capture publishes independently of VAD/JNI; waiting cannot block
+                                // the producer, including on VAD failure or a partial final read.
+                                val retry = TdtEmptyRetry.live(text, floatChunk, chunk.startSample, chunk.endExclusive,
+                                    MAX_DECODER_SAMPLES, chunk.trailingTrim.droppedSamples > 0, capturedProgress, { chunk.samples[it] / 32768f },
+                                    { !current.cancelled && prefs.serviceEnabled }) { audio ->
+                                    Log.i(TAG, "Retrying empty TDT chunk: initial dither=${current.initialTdtDither}, retry dither=${TdtEmptyRetry.DITHER}; trimmed tail=${chunk.trailingTrim.droppedSamples} samples; no extra outer silence; correctness not guaranteed")
+                                    current.vadReport?.timestampsReliable = false
+                                    tokenDetails = "unavailable: retry input includes adjacent audio"
+                                    postChunkProcessing(current, true)
+                                    try { decodeDitheredRetry(audio, current).trim() }
+                                    finally { postChunkProcessing(current, false) }
+                                }
+                                text = retry.text
+                                retryDetails = when (retry.status) {
+                                    TdtEmptyRetry.Status.NOT_NEEDED -> "not needed"
+                                    TdtEmptyRetry.Status.CANCELLED -> "cancelled before retry"
+                                    TdtEmptyRetry.Status.LIMIT -> {
+                                        Log.w(TAG, "Empty TDT chunk retry skipped: decoder sample limit")
+                                        "skipped: decoder sample limit"
+                                    }
+                                    TdtEmptyRetry.Status.ATTEMPTED ->
+                                        if (chunk.trailingTrim.droppedSamples > 0)
+                                            "initial dither=${current.initialTdtDither}; retry dither=${TdtEmptyRetry.DITHER}; left original context=${minOf(chunk.startSample, TdtEmptyRetry.CONTEXT)} samples; no right context or artificial zeros; trimmed tail not reintroduced; correctness not guaranteed"
+                                        else "initial dither=${current.initialTdtDither}; retry dither=${TdtEmptyRetry.DITHER}; original context: left=${minOf(chunk.startSample, TdtEmptyRetry.CONTEXT)}, right=${minOf(retry.available - chunk.endExclusive, TdtEmptyRetry.CONTEXT)} samples, remainder zero-filled; no extra outer silence; correctness not guaranteed"
+                                }
+                                recordDiagnostic(text.ifBlank { "<empty>" })
                                 if (!current.cancelled && prefs.serviceEnabled && text.isNotBlank()) {
                                     decodedTexts += text
                                 }
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {
+                                recordDiagnostic("<decode error: ${e.javaClass.simpleName}>")
                                 failure = e
                             } catch (e: LinkageError) {
+                                recordDiagnostic("<native decode error: ${e.javaClass.simpleName}>")
                                 failure = IllegalStateException("Native TDT chunk decode failed", e)
                             }
                         }
@@ -672,10 +989,30 @@ class SpeechEngine private constructor(private val context: Context) {
                     }
 
                     val samples = try {
-                        withContext(Dispatchers.IO) {
-                            captureRecording(current, onVadInput = { range -> pcmInput.send(range) })
+                        if (replaySamples == null) {
+                            withContext(Dispatchers.IO) {
+                                captureRecording(current, onVadInput = { range -> pcmInput.send(range) },
+                                    onCaptureProgress = capturedProgress::publish,
+                                    onCaptureFinished = capturedProgress::finish)
+                            }
+                        } else {
+                            // History stores the original PCM16 exactly. Replay the same 1024-sample
+                            // input blocks into the live segmenter and concurrent decoder; do not
+                            // trim silence or use the ordinary History retry's windowing policy.
+                            require(replaySamples.isNotEmpty() && replaySamples.size <= MAX_LIVE_SAMPLES)
+                            val pcm = ShortArray(replaySamples.size) { (replaySamples[it] * 32768f).toInt().toShort() }
+                            capturedProgress.publish(pcm.size)
+                            capturedProgress.finish()
+                            var start = 0
+                            while (start < pcm.size && !current.cancelled && prefs.serviceEnabled) {
+                                val end = minOf(start + CAPTURE_READ_SAMPLES, pcm.size)
+                                pcmInput.send(CapturedPcmRange(pcm, start, end))
+                                start = end
+                            }
+                            replaySamples
                         }
                     } finally {
+                        capturedProgress.finish()
                         pcmInput.close()
                     }
                     segmenter.join()
@@ -693,48 +1030,89 @@ class SpeechEngine private constructor(private val context: Context) {
 
                     val failure = segmentationFailure ?: decoderFailure
                     val completeCoverage = decodedChunkCount > 0 && decodedEndSample == samples.size
-                    val text = if (failure != null || !completeCoverage) {
+                    val result = if (failure != null || !completeCoverage) {
+                        if (current.historyVadMode == HistoryVadMode.REMOVE_SILENCE) {
+                            current.vadReport?.pipeline = "failed: silence removal could not be completed; no untransformed fallback"
+                            throw IllegalStateException("Silence-removal retry failed; no untransformed fallback was used.", failure)
+                        }
+                        current.vadReport?.pipeline = "full-audio fallback: ${failure?.javaClass?.simpleName ?: "incomplete range coverage"}"
                         Log.w(TAG, "Chunked TDT path incomplete (${failure?.javaClass?.simpleName ?: "range coverage"}); retrying full PCM")
+                        if (current.cancelled || !prefs.serviceEnabled) return@coroutineScope TdtCaptureResult(samples, "")
                         releaseNative()
-                        initializeEngine(
+                        initializeEngine(current = current,
                             modelId = current.modelId,
+                            asrThreadCount = current.asrThreadCount,
                             deferTranscriptTransforms = true,
                             decoderSettings = current.acousticDecoderSettings
                         )
+                        if (current.cancelled || !prefs.serviceEnabled) return@coroutineScope TdtCaptureResult(samples, "")
                         // Preserve every captured sample; do not apply per-recording endpoint trimming.
-                        decode(samples, current)
+                        val fallbackText = decodeStaticWithRetry(samples, samples, 0, samples.size, current, recordInPipeline = true)
+                        current.vadReport?.fallbackText = fallbackText.ifBlank { "<empty>" }
+                        DecodeResult(fallbackText)
                     } else {
-                        decodedTexts.joinToString(" ")
+                        current.vadReport?.pipeline = "ordered original ranges accounted for (short speechless tail may be skipped)"
+
+                        val chunks = decodedTexts.toList()
+                        DecodeResult(chunks.joinToString(" "), chunks)
                     }
-                    TdtCaptureResult(samples, text)
+                    TdtCaptureResult(samples, result.text, result.chunks)
                 }
             }
         }
 
-    /** Emit contiguous PCM at endpoints after 5 seconds of cumulative speech; flush the tail once. */
+    /** Emit contiguous PCM after five seconds of speech and a pause, or a three-second silence. */
     private suspend fun segmentLiveTdtAudio(
         current: Session,
         pcmInput: Channel<CapturedPcmRange>,
-        tdtChunks: Channel<TdtPcmChunk>
+        tdtChunks: Channel<TdtPcmChunk>,
+        negativeRuns: HistoryNegativeRuns
     ) {
         var detector: SpeechActivityDetector? = null
         var lastDetected = false
         var nextChunkStart = 0
-        var chunkSpeechStart = 0
+        val chunkPolicy = TdtChunkPolicy(SAMPLE_RATE)
+        var chunkPossibleSpeechStart = 0
+        var chunkConfirmedSpeechStart = 0
+        var lastConfirmedSpeechSamples = 0
+        var lastPossibleSpeechSamples = 0
         var expectedInputStart = 0
         var sequence = 0
         var recording: ShortArray? = null
+        val liveRuns = if (current.liveTdtRemoveSilence) LiveNegativeRuns(SAMPLE_RATE) else null
+        val trailingTrim = VadTrailingTrim(VAD_FRAME_SAMPLES)
+        val pendingChunks = java.util.ArrayDeque<TdtPcmChunk>()
+        suspend fun flushResolvedChunks() {
+            val tracker = liveRuns ?: return
+            while (pendingChunks.isNotEmpty() && checkNotNull(pendingChunks.peekFirst()).endExclusive <= tracker.resolvedThrough()) {
+                val chunk = pendingChunks.removeFirst()
+                val runs = tracker.takeForChunk(chunk.startSample, chunk.endExclusive)
+                tdtChunks.send(chunk.copy(liveNegativeRuns = runs))
+            }
+        }
+        suspend fun emitChunk(chunk: TdtPcmChunk) {
+            if (liveRuns == null) tdtChunks.send(chunk)
+            else {
+                pendingChunks.addLast(chunk)
+                flushResolvedChunks()
+            }
+        }
         try {
             try {
                 detector = SpeechActivityDetector(context, tdtChunking = true)
+                current.vadReport?.vadStatus = "available"
                 updateSpeechActivity(current, available = true, detected = false)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: LinkageError) {
                 Log.w(TAG, "Speech activity native code unavailable; preserving full PCM for TDT", e)
+                current.vadReport?.vadStatus = "unavailable: ${e.javaClass.simpleName}; remaining audio decoded unsplit"
+                if (current.historyVadMode == HistoryVadMode.REMOVE_SILENCE || current.liveTdtRemoveSilence) throw IllegalStateException("Silero VAD unavailable", e)
                 updateSpeechActivity(current, available = false, detected = false)
             } catch (e: Exception) {
                 Log.w(TAG, "Speech activity detector unavailable; preserving full PCM for TDT", e)
+                current.vadReport?.vadStatus = "unavailable: ${e.javaClass.simpleName}; remaining audio decoded unsplit"
+                if (current.historyVadMode == HistoryVadMode.REMOVE_SILENCE || current.liveTdtRemoveSilence) throw IllegalStateException("Silero VAD unavailable", e)
                 updateSpeechActivity(current, available = false, detected = false)
             }
 
@@ -756,47 +1134,104 @@ class SpeechEngine private constructor(private val context: Context) {
                     throw e
                 } catch (e: LinkageError) {
                     Log.w(TAG, "Speech activity native code stopped; preserving remaining PCM", e)
+                    current.vadReport?.vadStatus = "stopped near sample ${range.startSample}: ${e.javaClass.simpleName}; remaining audio decoded unsplit"
                     activeDetector.close()
                     detector = null
+                    if (current.historyVadMode == HistoryVadMode.REMOVE_SILENCE || current.liveTdtRemoveSilence) throw IllegalStateException("Silero VAD stopped", e)
                     updateSpeechActivity(current, available = false, detected = false)
                     continue
                 } catch (e: Exception) {
                     Log.w(TAG, "Speech activity detection stopped; preserving remaining PCM", e)
+                    current.vadReport?.vadStatus = "stopped near sample ${range.startSample}: ${e.javaClass.simpleName}; remaining audio decoded unsplit"
                     activeDetector.close()
                     detector = null
+                    if (current.historyVadMode == HistoryVadMode.REMOVE_SILENCE || current.liveTdtRemoveSilence) throw IllegalStateException("Silero VAD stopped", e)
                     updateSpeechActivity(current, available = false, detected = false)
                     continue
                 }
 
                 for (update in updates) {
+                    trailingTrim.observe(update.processedSamples, checkNotNull(update.probability) { "Missing VAD frame probability" })
+                    liveRuns?.let {
+                        it.observe(update.processedSamples - VAD_FRAME_SAMPLES, update.processedSamples,
+                            checkNotNull(update.probability) { "Missing VAD frame probability" })
+                        flushResolvedChunks()
+                    }
+                    if (current.historyVadMode == HistoryVadMode.REMOVE_SILENCE) {
+                        val probability = checkNotNull(update.probability) { "Missing VAD frame probability" }
+                        negativeRuns.observe(update.processedSamples - VAD_FRAME_SAMPLES, update.processedSamples, probability)
+                    }
+                    current.vadReport?.let { report ->
+                        if (report.intervalCaptureError == null) {
+                            try { report.observe(update) } catch (e: Exception) {
+                                report.intervalCaptureError = e.javaClass.simpleName
+                            }
+                        }
+                    }
+                    lastConfirmedSpeechSamples = update.speechSamples
+                    lastPossibleSpeechSamples = update.possibleSpeechSamples
                     if (update.detected != lastDetected) {
                         lastDetected = update.detected
                         updateSpeechActivity(current, available = true, detected = update.detected)
                     }
-                    if (update.speechEnded && !current.cancelled &&
-                        update.speechSamples - chunkSpeechStart >= MIN_TDT_CHUNK_SPEECH_SAMPLES) {
+                    if (!current.cancelled && chunkPolicy.onFrame(
+                            update.processedSamples, update.detected, update.speechEnded,
+                            update.speechSamples, update.possibleSpeechInFrame
+                        )) {
                         check(update.processedSamples in nextChunkStart..expectedInputStart)
                         if (update.processedSamples > nextChunkStart) {
-                            tdtChunks.send(TdtPcmChunk(
+                            emitChunk(TdtPcmChunk(
                                 sequence = sequence++,
                                 samples = range.samples,
                                 startSample = nextChunkStart,
-                                endExclusive = update.processedSamples
+                                endExclusive = update.processedSamples,
+                                boundaryReason = chunkPolicy.lastBoundaryReason ?: "VAD boundary",
+                                confirmedSpeechSamples = update.speechSamples - chunkConfirmedSpeechStart,
+                                possibleSpeechSamples = update.possibleSpeechSamples - chunkPossibleSpeechStart,
+                                trailingTrim = trailingTrim.finishChunk(nextChunkStart, update.processedSamples, observationsAvailable = true)
                             ))
                             nextChunkStart = update.processedSamples
-                            chunkSpeechStart = update.speechSamples
+                            chunkPossibleSpeechStart = update.possibleSpeechSamples
+                            chunkConfirmedSpeechStart = update.speechSamples
                         }
                     }
                 }
             }
 
+            liveRuns?.finish(expectedInputStart)
+            flushResolvedChunks()
             val finalSamples = recording
             if (!current.cancelled && finalSamples != null && expectedInputStart > nextChunkStart) {
-                tdtChunks.send(TdtPcmChunk(
+                val activeDetector = detector
+                // Tails of at least one second always decode. For shorter tails, retain even an
+                // unconfirmed speech candidate; VAD failures must always fail open.
+                val tailSamples = expectedInputStart - nextChunkStart
+                val skipSpeechlessTail = if (tailSamples < SAMPLE_RATE && activeDetector != null &&
+                    activeDetector.possibleSpeechSamples == chunkPossibleSpeechStart) {
+                    try {
+                        chunkPolicy.skipTail(tailSamples, detectorAvailable = true,
+                            possibleSpeech = activeDetector.finalPartialFrameMayContainSpeech())
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: LinkageError) {
+                        Log.w(TAG, "Final speech activity check failed; decoding remaining PCM", e)
+                        false
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Final speech activity check failed; decoding remaining PCM", e)
+                        false
+                    }
+                } else {
+                    false
+                }
+                emitChunk(TdtPcmChunk(
                     sequence = sequence,
                     samples = finalSamples,
                     startSample = nextChunkStart,
-                    endExclusive = expectedInputStart
+                    endExclusive = expectedInputStart,
+                    skipSpeechlessTail = skipSpeechlessTail,
+                    confirmedSpeechSamples = lastConfirmedSpeechSamples - chunkConfirmedSpeechStart,
+                    possibleSpeechSamples = lastPossibleSpeechSamples - chunkPossibleSpeechStart,
+                    trailingTrim = trailingTrim.finishChunk(nextChunkStart, expectedInputStart, observationsAvailable = activeDetector != null)
                 ))
             }
         } finally {
@@ -811,9 +1246,9 @@ class SpeechEngine private constructor(private val context: Context) {
                 if (current.cancelled || !prefs.serviceEnabled) {
                     return@withLock StreamingCaptureResult(floatArrayOf(), "")
                 }
-                initializeEngine(modelId = current.modelId, deferTranscriptTransforms = true)
+                initializeEngine(current = current, modelId = current.modelId, asrThreadCount = current.asrThreadCount, deferTranscriptTransforms = true)
                 val engine = checkNotNull(onlineRecognizer)
-                val stream = engine.createStream()
+                val stream = createOnlineStream(engine)
                 try {
                     coroutineScope {
                         // Capacity covers the entire bounded recording if inference temporarily
@@ -837,14 +1272,7 @@ class SpeechEngine private constructor(private val context: Context) {
                                     }
                                 }
                                 if (receivedAudio && !current.cancelled && prefs.serviceEnabled) {
-                                    stream.inputFinished()
-                                    while (engine.isReady(stream)) {
-                                        if (current.cancelled || !prefs.serviceEnabled) break
-                                        engine.decode(stream)
-                                    }
-                                    if (!current.cancelled && prefs.serviceEnabled) {
-                                        finalText = engine.getResult(stream).text.trim()
-                                    }
+                                    finalText = finishOnlineStream(engine, stream, current)
                                 }
                             } catch (e: CancellationException) {
                                 throw e
@@ -879,7 +1307,9 @@ class SpeechEngine private constructor(private val context: Context) {
     private suspend fun captureRecording(
         current: Session,
         onStreamingChunk: (suspend (ShortArray) -> Unit)? = null,
-        onVadInput: (suspend (CapturedPcmRange) -> Unit)? = null
+        onVadInput: (suspend (CapturedPcmRange) -> Unit)? = null,
+        onCaptureProgress: ((Int) -> Unit)? = null,
+        onCaptureFinished: (() -> Unit)? = null
     ): FloatArray {
         if (current.stopped || current.cancelled) return floatArrayOf()
         val minBytes = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -892,7 +1322,9 @@ class SpeechEngine private constructor(private val context: Context) {
         val audio = AudioRecord(MediaRecorder.AudioSource.MIC, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT, maxOf(minBytes * 4, SAMPLE_RATE * 2))
         var speechDetector: SpeechActivityDetector? = null
-        if (onVadInput == null) {
+        // Streaming feeds every captured sample directly to its recognizer and does not
+        // need the visual-only Silero detector. Keep TDT's existing behavior unchanged.
+        if (onVadInput == null && !ModelInfo.getModelById(current.modelId).streaming) {
             try {
                 speechDetector = SpeechActivityDetector(context)
                 updateSpeechActivity(current, available = true, detected = false)
@@ -920,12 +1352,44 @@ class SpeechEngine private constructor(private val context: Context) {
             }
         }
         try {
+            val preferredDevice = current.preferredMicrophone?.let { MicrophoneDevices.resolve(context, it) }
+            var routeWarningSent = false
+            var nextRouteCheck = 0L
+            fun checkPreferredRoute() {
+                if (preferredDevice == null || current.stopped || current.cancelled) return
+                val routed = audio.routedDevice
+                if (routed == null) {
+                    if (!routeWarningSent) {
+                        routeWarningSent = true
+                        mainHandler.post {
+                            if (session === current && !current.cancelled) {
+                                val message = "Android could not verify the selected microphone route."
+                                val notify = onError
+                                if (notify != null) notify(message)
+                                else Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                } else {
+                    check(routed.id == preferredDevice.id) {
+                        "Android routed audio to a different microphone. Choose another microphone or System default."
+                    }
+                    routeWarningSent = false
+                }
+            }
             synchronized(recorderLock) {
                 check(audio.state == AudioRecord.STATE_INITIALIZED) { "Microphone could not be initialized." }
                 if (!current.stopped && !current.cancelled) {
+                    if (preferredDevice != null) {
+                        check(audio.setPreferredDevice(preferredDevice)) {
+                            "Android rejected the selected microphone. Choose another microphone or System default."
+                        }
+                    }
                     audio.startRecording()
                     check(audio.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Microphone did not start." }
                     recorder = audio
+                    // Check after capture delivers its first buffer: an immediate routing query
+                    // may run before Android has settled the newly started input route.
                 }
             }
             if (audio.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
@@ -946,8 +1410,13 @@ class SpeechEngine private constructor(private val context: Context) {
                     audio.read(recording, count, requested, AudioRecord.READ_BLOCKING)
                 }
                 if (read > 0) {
+                    if (preferredDevice != null && SystemClock.elapsedRealtime() >= nextRouteCheck) {
+                        nextRouteCheck = SystemClock.elapsedRealtime() + 1000L
+                        checkPreferredRoute()
+                    }
                     val readStart = count
                     count += read
+                    onCaptureProgress?.invoke(count)
                     val detector = speechDetector
                     if (detector != null && !current.cancelled && !current.stopped) {
                         try {
@@ -998,6 +1467,7 @@ class SpeechEngine private constructor(private val context: Context) {
                 check(read > 0) { "Microphone read failed ($read)." }
             }
         } finally {
+            onCaptureFinished?.invoke()
             // Release the microphone BEFORE waiting at the cap or initializing native ASR.
             synchronized(recorderLock) {
                 if (recorder === audio) recorder = null
@@ -1035,56 +1505,244 @@ class SpeechEngine private constructor(private val context: Context) {
         return FloatArray(count) { recording[it] / 32768f }
     }
 
+    /** Local advisory work only. Every extra decode runs under the same native lock. */
+    private suspend fun collectHistoryDiagnostics(current: Session, samples: FloatArray) {
+        val report = current.vadReport ?: return
+        withContext(Dispatchers.Default) {
+            fun active() = !current.cancelled && prefs.serviceEnabled
+            suspend fun advisory(onFailure: (String) -> Unit, block: suspend () -> Unit) {
+                try {
+                    currentCoroutineContext().ensureActive()
+                    if (active()) block()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    onFailure(e.javaClass.simpleName)
+                } catch (e: LinkageError) {
+                    onFailure(e.javaClass.simpleName)
+                }
+            }
+            fun seconds(sample: Int) = String.format(Locale.ROOT, "%.3f", sample.toDouble() / SAMPLE_RATE)
+            advisory({ report.levels = "unavailable: $it" }) {
+                val lines = ArrayList<String>()
+                // Fine resolution helps compare individual utterances in short recordings;
+                // keep long reports bounded to at most 120 intervals.
+                val step = SAMPLE_RATE * if (samples.size <= SAMPLE_RATE * 60) 1 else 5
+                var start = 0
+                while (start < samples.size && active()) {
+                    currentCoroutineContext().ensureActive()
+                    val end = minOf(start + step, samples.size)
+                    var sum = 0.0
+                    var peak = 0.0
+                    for (i in start until end) {
+                        val value = kotlin.math.abs(samples[i].toDouble())
+                        sum += value * value
+                        peak = maxOf(peak, value)
+                    }
+                    fun db(value: Double) = if (value == 0.0) "-inf" else
+                        String.format(Locale.ROOT, "%.1f", 20.0 * kotlin.math.log10(value))
+                    lines += "${seconds(start)}–${seconds(end)} s RMS ${db(kotlin.math.sqrt(sum / (end - start)))}; peak ${db(peak)} dBFS"
+                    start = end
+                }
+                if (active()) report.levels = lines.joinToString("\n")
+            }
+
+            advisory({ report.isolated = "unavailable: $it" }) {
+                val lastToken = report.lastTokenSeconds
+                val unavailable = when {
+                    report.pipeline.startsWith("full-audio fallback") -> "primary result used full-audio fallback, not chunk timestamps"
+                    current.historyVadMode != HistoryVadMode.STANDARD -> "transformed chunk timestamps are not mapped to original audio"
+                    report.vadStatus != "available" || report.intervalCaptureError != null -> "VAD observations incomplete"
+                    report.intervalsTruncated -> "VAD interval list truncated"
+                    !report.timestampsReliable -> "chunk timestamps invalid or unavailable"
+                    lastToken == null -> "no usable chunk token timestamp"
+                    else -> null
+                }
+                if (unavailable != null) {
+                    report.isolated = "skipped: $unavailable"
+                } else {
+                    // Token timestamps are starts, not word ends. A 300 ms guard reduces (but
+                    // cannot eliminate) overlap with the last recognized word.
+                    val after = ((lastToken!! + 0.3) * SAMPLE_RATE).toInt().coerceAtMost(samples.size)
+                    var runStart = -1
+                    var runEnd = -1
+                    var candidateStart = -1
+                    var candidateEnd = -1
+                    fun considerRun() {
+                        val clippedStart = maxOf(runStart, after)
+                        if (runStart >= 0 && runEnd - clippedStart >= SAMPLE_RATE / 4) {
+                            candidateStart = clippedStart
+                            candidateEnd = runEnd
+                        }
+                    }
+                    for (interval in report.intervals) {
+                        if (runEnd != interval.start) {
+                            considerRun()
+                            runStart = interval.start
+                        }
+                        runEnd = interval.end
+                    }
+                    considerRun()
+                    if (candidateStart < 0) {
+                        report.isolated = "skipped: no continuous VAD-positive interval of at least 250 ms after the last token + 300 ms guard"
+                    } else {
+                        // Keep the last up-to-7 seconds of the positive region, plus 500 ms
+                        // original context on each side; no padding, gain, or normalization.
+                        val speechStart = maxOf(candidateStart, candidateEnd - SAMPLE_RATE * 7)
+                        val start = maxOf(0, speechStart - SAMPLE_RATE / 2)
+                        val end = minOf(samples.size, candidateEnd + SAMPLE_RATE / 2)
+                        nativeLock.withLock {
+                            if (active()) {
+                                initializeEngine(current = current, modelId = current.modelId, deferTranscriptTransforms = true,
+                                    asrThreadCount = current.asrThreadCount,
+                                    decoderSettings = current.acousticDecoderSettings)
+                                if (active()) {
+                                    val text = decodeStaticWithRetry(samples.copyOfRange(start, end), samples, start, end, current)
+                                    if (active()) report.isolated = "VAD-positive ${seconds(speechStart)}–${seconds(candidateEnd)} s; " +
+                                        "original audio ${seconds(start)}–${seconds(end)} s (up to 500 ms margins; max 8 s); " +
+                                        "ordinary diagnostic replay; initial dither=${current.initialTdtDither}; an empty result gets dither=${TdtEmptyRetry.DITHER}, 100 ms original context per side (missing context zero-filled), without extra outer silence. Correctness is not guaranteed. Raw ASR: ${text.ifBlank { "<empty>" }}"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            advisory({ report.baseline = "unavailable: $it" }) {
+                if (samples.size > SAMPLE_RATE * 60) {
+                    report.baseline = "skipped: recording exceeds 60 s comparison limit"
+                } else nativeLock.withLock {
+                    if (active()) {
+                        // Ordinary History initializes an unbiased decoder regardless of the
+                        // currently cached recognizer. Do not reuse the possibly biased VAD one.
+                        initializeEngine(current = current, forceUnbiased = true, modelId = current.modelId,
+                            asrThreadCount = current.asrThreadCount,
+                            deferTranscriptTransforms = true)
+                        if (active()) {
+                            val endpoint = FinalAudioPolicy.endpointRange(samples, SAMPLE_RATE)
+                            val trimmed = if (endpoint.start == 0 && endpoint.endExclusive == samples.size) samples
+                                else samples.copyOfRange(endpoint.start, endpoint.endExclusive)
+                            val windows = FinalAudioPolicy.reprocessWindows(trimmed, SAMPLE_RATE)
+                            val lines = ArrayList<String>()
+                            lines += "Unbiased greedy decoder; initial dither=${current.initialTdtDither}, empty-result retry dither=${TdtEmptyRetry.DITHER} with 100 ms original context per side (missing context zero-filled), without extra outer silence; correctness not guaranteed. Exact-zero endpoints ${seconds(endpoint.start)}–${seconds(endpoint.endExclusive)} s (samples ${endpoint.start}–${endpoint.endExclusive}, end exclusive)."
+                            for ((index, window) in windows.withIndex()) {
+                                currentCoroutineContext().ensureActive()
+                                if (!active()) break
+                                val start = endpoint.start + window.start
+                                val end = endpoint.start + window.endExclusive
+                                val text = decodeStaticWithRetry(trimmed.copyOfRange(window.start, window.endExclusive), samples, start, end, current)
+                                if (!active()) break
+                                lines += "Window ${index + 1}: ${seconds(start)}–${seconds(end)} s (samples $start–$end, end exclusive); raw ASR: ${text.ifBlank { "<empty>" }}"
+                            }
+                            if (active()) report.baseline = lines.joinToString("\n")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /** Final-only decode; history reprocessing may use contiguous bounded windows. */
     private fun decodeRecording(
         samples: FloatArray,
         current: Session,
         reprocessInWindows: Boolean = false
-    ): String {
-        if (current.cancelled || !prefs.serviceEnabled) return ""
+    ): DecodeResult {
+        if (current.cancelled || !prefs.serviceEnabled) return DecodeResult("")
         require(samples.isNotEmpty() && samples.size <= MAX_LIVE_SAMPLES) { "Recording duration exceeded." }
+        // One persistent online stream for the whole file: no history windows, VAD
+        // segmentation, or endpoint trimming may discard context or cut words.
+        if (ModelInfo.getModelById(current.modelId).streaming) {
+            return DecodeResult(decodeOnline(samples, current))
+        }
         val endpoints = FinalAudioPolicy.endpointRange(samples, SAMPLE_RATE)
         val finalSamples = if (endpoints.start == 0 && endpoints.endExclusive == samples.size) samples
             else samples.copyOfRange(endpoints.start, endpoints.endExclusive)
-        if (current.cancelled || !prefs.serviceEnabled) return ""
+        if (current.cancelled || !prefs.serviceEnabled) return DecodeResult("")
         Log.i(TAG, "Final PCM endpoints ${endpoints.start}..${endpoints.endExclusive} of ${samples.size}; exact-zero only")
-        val text = if (reprocessInWindows) decodeInWindows(finalSamples, current) else decode(finalSamples, current)
-        if (current.cancelled || !prefs.serviceEnabled) return ""
-        return text
+        val result = if (reprocessInWindows) decodeInWindows(finalSamples, samples, endpoints.start, current)
+            else DecodeResult(decodeStaticWithRetry(finalSamples, samples, endpoints.start, endpoints.endExclusive, current))
+        if (current.cancelled || !prefs.serviceEnabled) return DecodeResult("")
+        return result
     }
 
-    private fun decodeInWindows(samples: FloatArray, current: Session): String {
+    private fun decodeInWindows(samples: FloatArray, original: FloatArray, originalOffset: Int, current: Session): DecodeResult {
         val windows = FinalAudioPolicy.reprocessWindows(samples, SAMPLE_RATE)
         Log.i(TAG, "History retry using ${windows.size} decode window(s) for ${samples.size} samples")
         val results = ArrayList<String>(windows.size)
         for (window in windows) {
-            if (current.cancelled || !prefs.serviceEnabled) return ""
-            val text = decode(samples.copyOfRange(window.start, window.endExclusive), current).trim()
-            if (current.cancelled || !prefs.serviceEnabled) return ""
+            if (current.cancelled || !prefs.serviceEnabled) return DecodeResult("")
+            val text = decodeStaticWithRetry(samples.copyOfRange(window.start, window.endExclusive), original,
+                originalOffset + window.start, originalOffset + window.endExclusive, current).trim()
+            if (current.cancelled || !prefs.serviceEnabled) return DecodeResult("")
             if (text.isNotBlank()) results += text
         }
-        return results.joinToString(" ")
+        return DecodeResult(results.joinToString(" "), results.toList())
     }
 
-    private fun decode(samples: FloatArray, current: Session): String {
-        require(samples.isNotEmpty() && samples.size <= MAX_LIVE_SAMPLES) { "Recording duration exceeded." }
+    /** Static file/window/fallback paths retain their untrimmed original-coordinate source. */
+    private fun decodeStaticWithRetry(input: FloatArray, original: FloatArray, start: Int, end: Int, current: Session,
+                                      recordInPipeline: Boolean = false): String {
+        return TdtEmptyRetry.static(input, original, start, end, MAX_DECODER_SAMPLES,
+            !ModelInfo.getModelById(current.modelId).streaming,
+            { !current.cancelled && prefs.serviceEnabled }, { decode(it, current) },
+            { decodeDitheredRetry(it, current) }) { status ->
+            if (status == TdtEmptyRetry.Status.LIMIT) {
+                Log.w(TAG, "Empty TDT retry skipped: decoder sample limit")
+                if (recordInPipeline) current.vadReport?.pipeline += "; empty full-audio retry skipped: decoder sample limit"
+            } else {
+                Log.i(TAG, "Retrying empty TDT result: initial dither=${current.initialTdtDither}, retry dither=${TdtEmptyRetry.DITHER}; 100 ms original context per side (missing context zero-filled), without extra outer silence; correctness not guaranteed")
+                if (recordInPipeline) current.vadReport?.pipeline += "; empty full-audio result retried with 100 ms original context per side (missing context zero-filled), without extra outer silence; initial dither=${current.initialTdtDither}, retry dither=${TdtEmptyRetry.DITHER}; correctness not guaranteed"
+            }
+        }
+    }
+
+    /** Called under nativeLock. Recreate, never setConfig: JNI may not rebuild feature extraction. */
+    private fun decodeDitheredRetry(samples: FloatArray, current: Session): String {
+        val original = checkNotNull(recognizer).config
+        check(original.featConfig.dither == current.initialTdtDither)
+        val key = checkNotNull(loadedConfigKey)
+        check(key.dither == current.initialTdtDither)
+        fun switch(dither: Float) {
+            // Drop the previous model before loading the next to avoid two native model copies.
+            releaseNative()
+            val config = original.copy(featConfig = original.featConfig.copy(dither = dither))
+            recognizer = OfflineRecognizer(null, config)
+            loadedConfigKey = key.copy(dither = dither)
+        }
+        return TdtEmptyRetry.withDitheredRecognizer(current.initialTdtDither, ::switch,
+            { decode(samples, current, expectedDither = TdtEmptyRetry.DITHER) }) { error ->
+            Log.w(TAG, "Dithered empty TDT retry failed; keeping original empty result", error)
+        }
+    }
+
+    private fun decode(
+        samples: FloatArray,
+        current: Session,
+        onOfflineResult: ((OfflineRecognizerResult) -> Unit)? = null,
+        expectedDither: Float = current.initialTdtDither
+    ): String {
+        require(samples.isNotEmpty() && samples.size <= MAX_DECODER_SAMPLES) { "Decoder sample limit exceeded." }
         if (ModelInfo.getModelById(current.modelId).streaming) {
             return decodeOnline(samples, current)
         }
         val engine = checkNotNull(recognizer)
+        check(engine.config.featConfig.dither == expectedDither) { "Unexpected offline recognizer dither" }
         val stream = engine.createStream()
         return try {
             stream.acceptWaveform(samples, SAMPLE_RATE)
             if (current.cancelled || !prefs.serviceEnabled) return ""
             engine.decode(stream)
-            engine.getResult(stream).text.trim()
+            val result = engine.getResult(stream)
+            onOfflineResult?.invoke(result)
+            result.text.trim()
         } finally { stream.release() }
     }
 
     /** Feed completed audio through the online recognizer for watch-file and History paths. */
     private fun decodeOnline(samples: FloatArray, current: Session): String {
         val engine = checkNotNull(onlineRecognizer)
-        val stream = engine.createStream()
+        val stream = createOnlineStream(engine)
         return try {
             var offset = 0
             while (offset < samples.size) {
@@ -1098,13 +1756,32 @@ class SpeechEngine private constructor(private val context: Context) {
                 offset = end
             }
             if (current.cancelled || !prefs.serviceEnabled) return ""
-            stream.inputFinished()
-            while (engine.isReady(stream)) {
-                if (current.cancelled || !prefs.serviceEnabled) return ""
-                engine.decode(stream)
-            }
-            engine.getResult(stream).text.trim()
+            finishOnlineStream(engine, stream, current)
         } finally { stream.release() }
+    }
+
+    /** sherpa's multilingual NeMo stream defaults to language auto when unset. */
+    private fun createOnlineStream(engine: OnlineRecognizer): OnlineStream {
+        val stream = engine.createStream()
+        try {
+            stream.acceptWaveform(FloatArray(NEMOTRON_LEFT_PADDING_SAMPLES), SAMPLE_RATE)
+            return stream
+        } catch (e: Throwable) {
+            stream.release()
+            throw e
+        }
+    }
+
+    private fun finishOnlineStream(engine: OnlineRecognizer, stream: OnlineStream, current: Session): String {
+        if (current.cancelled || !prefs.serviceEnabled) return ""
+        // InputFinished alone does not flush a partially filled NeMo encoder chunk.
+        stream.acceptWaveform(FloatArray(NEMOTRON_TAIL_PADDING_SAMPLES), SAMPLE_RATE)
+        stream.inputFinished()
+        while (engine.isReady(stream)) {
+            if (current.cancelled || !prefs.serviceEnabled) return ""
+            engine.decode(stream)
+        }
+        return if (!current.cancelled && prefs.serviceEnabled) engine.getResult(stream).text.trim() else ""
     }
 
     fun stopRecording() {
@@ -1209,6 +1886,7 @@ class SpeechEngine private constructor(private val context: Context) {
         isAwaitingStop = state == "recording_limit"
         isProcessing = processing
         currentStatus = state
+        if (!recording || isAwaitingStop) isChunkProcessing = false
         if (!recording) clearSpeechActivity()
         onStateChanged?.invoke(recording, processing)
         val current = session
@@ -1221,9 +1899,20 @@ class SpeechEngine private constructor(private val context: Context) {
         }
     }
 
+    /** Advisory UI only: ordered posts never block microphone capture or alter decoder ownership. */
+    private fun postChunkProcessing(current: Session, processing: Boolean) {
+        mainHandler.post {
+            if (session !== current || current.cancelled || current.stopped || !isRecording || isAwaitingStop) return@post
+            if (isChunkProcessing != processing) {
+                isChunkProcessing = processing
+                onChunkProcessingChanged?.invoke()
+            }
+        }
+    }
+
     private suspend fun updateSpeechActivity(current: Session, available: Boolean, detected: Boolean) {
         withContext(Dispatchers.Main.immediate) {
-            if (session !== current || current.cancelled || current.stopped) return@withContext
+            if (session !== current || current.cancelled || current.stopped || current.historyUseVad) return@withContext
             val asynchronousTdt = current.audioFile == null && current.historyAudioInputFileName == null &&
                 (current.modelId == AppPreferences.MODEL_PARAKEET_V2 ||
                     current.modelId == AppPreferences.MODEL_PARAKEET_V3)

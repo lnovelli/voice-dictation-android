@@ -14,9 +14,9 @@ import kotlin.math.roundToInt
 object HistoryAudioStore {
     private const val TAG = "HistoryAudioStore"
     private const val DIRECTORY_NAME = "history-audio"
-    private const val SAMPLE_RATE = 16_000
-    private const val MAX_DURATION_SECONDS = 120
-    private const val MAX_SAMPLES = SAMPLE_RATE * MAX_DURATION_SECONDS
+    private const val SAMPLE_RATE = RecordingLimits.SAMPLE_RATE
+    // Accept the entire bounded live capture; do not impose the smaller IPC-file limit.
+    private const val MAX_SAMPLES = RecordingLimits.MAX_LIVE_SAMPLES
     private const val WAV_HEADER_BYTES = 44
     private const val MAX_WAV_BYTES = WAV_HEADER_BYTES.toLong() + MAX_SAMPLES * 2L
     private val wavNamePattern = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.wav$")
@@ -102,14 +102,22 @@ object HistoryAudioStore {
                 dataBytes == size - WAV_HEADER_BYTES && dataBytes in 2..(MAX_SAMPLES * 2L) && dataBytes % 2L == 0L) {
                 "Saved WAV is invalid or uses an unsupported audio format."
             }
-            val pcm = ByteArray(dataBytes.toInt())
-            input.readFully(pcm)
-            require(input.read() == -1) { "Saved WAV changed while reading." }
-            FloatArray(pcm.size / 2) { index ->
-                val low = pcm[index * 2].toInt() and 0xff
-                val high = pcm[index * 2 + 1].toInt()
-                ((high shl 8) or low) / 32768f
+            // Decode in small blocks instead of holding a second full-size PCM byte array.
+            val samples = FloatArray((dataBytes / 2).toInt())
+            val pcm = ByteArray(16 * 1024)
+            var sampleOffset = 0
+            while (sampleOffset < samples.size) {
+                val sampleCount = minOf(pcm.size / 2, samples.size - sampleOffset)
+                input.readFully(pcm, 0, sampleCount * 2)
+                for (index in 0 until sampleCount) {
+                    val low = pcm[index * 2].toInt() and 0xff
+                    val high = pcm[index * 2 + 1].toInt()
+                    samples[sampleOffset + index] = ((high shl 8) or low) / 32768f
+                }
+                sampleOffset += sampleCount
             }
+            require(input.read() == -1) { "Saved WAV changed while reading." }
+            samples
         }
     }
 

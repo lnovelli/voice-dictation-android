@@ -11,10 +11,14 @@ internal data class SpeechActivityUpdate(
     val processedSamples: Int,
     val detected: Boolean,
     val speechEnded: Boolean,
-    val speechSamples: Int = 0
+    val speechSamples: Int = 0,
+    val possibleSpeechSamples: Int = 0,
+    val possibleSpeechInFrame: Boolean = false,
+    val confirmedSpeechInFrame: Boolean = false,
+    val probability: Float? = null
 )
 
-/** Silero endpoint detection; VAD locates boundaries but never filters authoritative PCM. */
+/** Silero endpoint detection; VAD never changes the authoritative recorded PCM. */
 internal class SpeechActivityDetector(
     context: Context,
     private val tdtChunking: Boolean = false
@@ -37,6 +41,9 @@ internal class SpeechActivityDetector(
     private var frameCount = 0
     private var processedSamples = 0
     private var speechSamples = 0
+    // Include unconfirmed onset candidates, so a short utterance is not mistaken for silence.
+    var possibleSpeechSamples: Int = 0
+        private set
     private var speechStartSample = 0
     private var speechStartCandidate = 0
     private var silenceStartSample = 0
@@ -67,7 +74,7 @@ internal class SpeechActivityDetector(
     }
 
     /**
-     * Returns state transitions from every complete 512-sample frame. TDT endpoint mode uses
+     * Returns every complete frame in TDT mode and visual state transitions otherwise. TDT uses
      * the probability API to avoid Sherpa retaining/copying an arbitrarily long active segment;
      * ordinary visual-only capture keeps the established segmenting API and its 5-second config.
      */
@@ -82,6 +89,9 @@ internal class SpeechActivityDetector(
             if (frameCount == WINDOW_SIZE) {
                 val previousDetected = lastDetected
                 processedSamples += WINDOW_SIZE
+                var possibleSpeechInFrame = false
+                var confirmedSpeechInFrame = false
+                var frameProbability: Float? = null
                 val detected = if (tdtChunking) {
                     // The max-duration trigger is intentionally an adaptive VAD policy, not a
                     // forced speech boundary. Its onset is approximate to sherpa's buffered size.
@@ -90,12 +100,19 @@ internal class SpeechActivityDetector(
                     val threshold = if (adaptive) 0.9f else SPEECH_THRESHOLD
                     val minSilenceSamples = (SAMPLE_RATE * if (adaptive) 0.1f else MIN_SILENCE_SECONDS).toInt()
                     val probability = vad.compute(frame)
+                    check(probability.isFinite()) { "Invalid speech activity probability" }
+                    frameProbability = probability
+                    if (probability >= SPEECH_THRESHOLD) possibleSpeechSamples += WINDOW_SIZE
                     val state = updateSpeechState(probability, threshold, minSilenceSamples)
-                    // Conservative voiced duration: count only complete, positively classified
-                    // frames after speech is confirmed. Onset candidates, hysteresis-only frames
-                    // and the endpoint's silence hangover never contribute, even during a pause
-                    // too short to end the current speech interval.
-                    if (state && probability > threshold) speechSamples += WINDOW_SIZE
+                    // Match the prior five-second policy: confirmed, positively classified
+                    // speech only; onset candidates and silence hangover do not count.
+                    confirmedSpeechInFrame = state && probability > threshold
+                    if (confirmedSpeechInFrame) speechSamples += WINDOW_SIZE
+                    // Retain onset candidates and frames maintaining active speech, but do not
+                    // count the VAD's trailing-silence hangover as speech.
+                    val negativeThreshold = maxOf(threshold - 0.15f, 0.01f)
+                    possibleSpeechInFrame = probability >= SPEECH_THRESHOLD ||
+                        (state && probability > negativeThreshold)
                     state
                 } else {
                     vad.acceptWaveform(frame)
@@ -105,12 +122,16 @@ internal class SpeechActivityDetector(
                     state
                 }
                 lastDetected = detected
-                if (tdtChunking && detected != previousDetected) {
+                if (tdtChunking) {
                     updates += SpeechActivityUpdate(
                         processedSamples = processedSamples,
                         detected = detected,
                         speechEnded = previousDetected && !detected,
-                        speechSamples = speechSamples
+                        speechSamples = speechSamples,
+                        possibleSpeechSamples = possibleSpeechSamples,
+                        possibleSpeechInFrame = possibleSpeechInFrame,
+                        confirmedSpeechInFrame = confirmedSpeechInFrame,
+                        probability = frameProbability
                     )
                 }
                 frameCount = 0
@@ -124,6 +145,17 @@ internal class SpeechActivityDetector(
             )
         }
         return updates
+    }
+
+    /** Analyze the final incomplete VAD frame with zero padding, without changing recorded PCM. */
+    fun finalPartialFrameMayContainSpeech(): Boolean {
+        check(!closed && tdtChunking) { "TDT speech activity detector is unavailable" }
+        if (frameCount == 0) return false
+        val paddedFrame = FloatArray(WINDOW_SIZE)
+        System.arraycopy(frame, 0, paddedFrame, 0, frameCount)
+        val probability = vad.compute(paddedFrame)
+        check(probability.isFinite()) { "Invalid speech activity probability" }
+        return probability >= SPEECH_THRESHOLD
     }
 
     /** Mirrors sherpa-onnx 1.13.8 Silero's IsSpeech() hysteresis and duration fallback. */

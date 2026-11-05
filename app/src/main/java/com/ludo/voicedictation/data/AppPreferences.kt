@@ -21,6 +21,11 @@ class AppPreferences(context: Context) {
     companion object {
         private const val PREFS_NAME = "voice_dictation_prefs"
         private const val KEY_SELECTED_MODEL = "selected_model"
+        private const val KEY_ASR_THREAD_COUNT = "asr_thread_count"
+        private const val KEY_ALWAYS_TDT_DITHER = "always_tdt_dither"
+        private const val KEY_PREFERRED_MICROPHONE = "preferred_microphone_v1"
+        private const val KEY_LIVE_TDT_VAD_CHUNKING = "live_tdt_vad_chunking"
+        private const val KEY_LIVE_TDT_REMOVE_SILENCE = "live_tdt_remove_silence"
         private const val KEY_HISTORY_LIMIT = "history_limit"
         private const val KEY_OVERLAY_OPACITY = "overlay_opacity"
         private const val KEY_OVERLAY_SCALE = "overlay_scale_percent"
@@ -56,7 +61,8 @@ class AppPreferences(context: Context) {
 
         const val MODEL_PARAKEET_V2 = "parakeet_v2"
         const val MODEL_PARAKEET_V3 = "parakeet_v3"
-        const val MODEL_PARAKEET_UNIFIED_STREAMING = "parakeet_unified_streaming"
+        const val MODEL_NEMOTRON_STREAMING = "nemotron_3_5_streaming"
+        private const val LEGACY_MODEL_PARAKEET_UNIFIED_STREAMING = "parakeet_unified_streaming"
     }
 
     var transcriptPolishingEnabled: Boolean
@@ -103,8 +109,46 @@ class AppPreferences(context: Context) {
         set(value) = prefs.edit().putBoolean("service_enabled", value).apply()
 
     var selectedModelId: String
-        get() = prefs.getString(KEY_SELECTED_MODEL, MODEL_PARAKEET_V2) ?: MODEL_PARAKEET_V2
+        get() {
+            val selected = prefs.getString(KEY_SELECTED_MODEL, MODEL_PARAKEET_V2) ?: MODEL_PARAKEET_V2
+            if (selected == LEGACY_MODEL_PARAKEET_UNIFIED_STREAMING) {
+                prefs.edit().putString(KEY_SELECTED_MODEL, MODEL_NEMOTRON_STREAMING).apply()
+                return MODEL_NEMOTRON_STREAMING
+            }
+            return selected
+        }
         set(value) = prefs.edit().putString(KEY_SELECTED_MODEL, value).apply()
+
+    /** Recognizer threads for subsequent recognition sessions; VAD has its own thread. */
+    var asrThreadCount: Int
+        get() = prefs.getInt(KEY_ASR_THREAD_COUNT, 2).coerceIn(2, 4)
+        set(value) = prefs.edit().putInt(KEY_ASR_THREAD_COUNT, value.coerceIn(2, 4)).apply()
+
+    /** Experimental feature dither for new TDT recognition sessions. */
+    var alwaysTdtDitherEnabled: Boolean
+        get() = prefs.getBoolean(KEY_ALWAYS_TDT_DITHER, false)
+        set(value) = prefs.edit().putBoolean(KEY_ALWAYS_TDT_DITHER, value).apply()
+
+    /** Null means Android's automatic input routing. The key contains no raw device address. */
+    val preferredMicrophone: String?
+        get() = prefs.getString(KEY_PREFERRED_MICROPHONE, null)
+
+    fun persistPreferredMicrophone(value: String?): Boolean {
+        val editor = prefs.edit()
+        if (value == null) editor.remove(KEY_PREFERRED_MICROPHONE)
+        else editor.putString(KEY_PREFERRED_MICROPHONE, value)
+        return editor.commit()
+    }
+
+    /** Applies to new live Parakeet TDT captures only; visual speech detection is independent. */
+    var liveTdtVadChunkingEnabled: Boolean
+        get() = prefs.getBoolean(KEY_LIVE_TDT_VAD_CHUNKING, true)
+        set(value) = prefs.edit().putBoolean(KEY_LIVE_TDT_VAD_CHUNKING, value).apply()
+
+    /** Opt-in for new live TDT captures while VAD chunking is enabled. */
+    var liveTdtRemoveSilenceEnabled: Boolean
+        get() = prefs.getBoolean(KEY_LIVE_TDT_REMOVE_SILENCE, false)
+        set(value) = prefs.edit().putBoolean(KEY_LIVE_TDT_REMOVE_SILENCE, value).apply()
 
     var historyLimit: Int
         get() = prefs.getInt(KEY_HISTORY_LIMIT, 10)
