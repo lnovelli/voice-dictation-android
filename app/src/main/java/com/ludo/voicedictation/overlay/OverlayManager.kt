@@ -26,6 +26,7 @@ import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.Toast
 import com.ludo.voicedictation.R
+import com.ludo.voicedictation.accessibility.OverlayDiagnostics
 import com.ludo.voicedictation.asr.SpeechEngine
 import com.ludo.voicedictation.asr.MicrophoneDevices
 import com.ludo.voicedictation.data.AppPreferences
@@ -54,6 +55,13 @@ class OverlayManager(private val context: Context) {
     private var overlayView: View? = null
     private var params: WindowManager.LayoutParams? = null
     private var isAttached = false
+    private var diagnosticRequested = "unknown"
+    private var diagnosticOutcome = "unknown"
+
+    /** App-owned view state only; it cannot establish whether Android actually displays pixels. */
+    internal fun diagnosticState(): String =
+        "overlayRequested=$diagnosticRequested overlayOutcome=$diagnosticOutcome attached=$isAttached markedVisible=${overlayView?.visibility?.let { it == View.VISIBLE } ?: "unknown"} pixels=unknown"
+
     private var hasUncommittedPosition = false
     private var positionIsLandscape = context.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     private var pulseAnimator: ObjectAnimator? = null
@@ -72,8 +80,9 @@ class OverlayManager(private val context: Context) {
 
     init {
         speechEngine.onStateChanged = { recording, processing ->
+            OverlayDiagnostics.record { "dictation state recording=$recording processing=$processing external=${speechEngine.isExternalSessionActive}" }
             if (recording || processing) microphoneDialog?.dismiss()
-            if (speechEngine.isExternalSessionActive && canShowExternalStatus()) show()
+            if (speechEngine.isExternalSessionActive && canShowExternalStatus()) showExternalStatus("dictation-state")
             else updateOverlayVisuals(recording, processing)
             if (!recording && !processing) {
                 // Run after final insertion, not between state cleanup and delivery.
@@ -81,11 +90,11 @@ class OverlayManager(private val context: Context) {
             }
         }
         speechEngine.onSpeechActivityChanged = {
-            if (speechEngine.isExternalSessionActive && canShowExternalStatus()) show()
+            if (speechEngine.isExternalSessionActive && canShowExternalStatus()) showExternalStatus("speech-activity")
             else updateOverlayVisuals(speechEngine.isRecording, speechEngine.isProcessing)
         }
         speechEngine.onChunkProcessingChanged = {
-            if (speechEngine.isExternalSessionActive && canShowExternalStatus()) show()
+            if (speechEngine.isExternalSessionActive && canShowExternalStatus()) showExternalStatus("chunk-processing")
             else updateOverlayVisuals(speechEngine.isRecording, speechEngine.isProcessing)
         }
         speechEngine.onRecordingLimit = {
@@ -98,6 +107,7 @@ class OverlayManager(private val context: Context) {
             onFinalTranscriptionReady?.invoke(text)
         }
         speechEngine.onError = { message ->
+            OverlayDiagnostics.record { "dictation error (details excluded)" }
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
         }
     }
@@ -112,16 +122,40 @@ class OverlayManager(private val context: Context) {
         return powerManager.isInteractive && !keyguardManager.isKeyguardLocked
     }
 
+    private fun showExternalStatus(trigger: String) {
+        val before = try { if (OverlayDiagnostics.isRecording()) diagnosticState() else null } catch (_: Exception) { null }
+        show()
+        try {
+            if (before != null && (before != diagnosticState() || diagnosticOutcome.startsWith("blocked-") || diagnosticOutcome.endsWith("-exception"))) {
+                OverlayDiagnostics.decision({ mapOf(trigger to 1L) }) {
+                    "Decision: show — external session active\n  Overlay: ${diagnosticState()}"
+                }
+            }
+        } catch (_: Exception) { /* Observational only. */ }
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     fun show() {
-        if (!prefs.serviceEnabled) return
+        diagnosticRequested = "show"
+        diagnosticOutcome = "show-requested"
+        if (!prefs.serviceEnabled) {
+            diagnosticOutcome = "blocked-disabled"
+            return
+        }
         if (!hasOverlayPermission()) {
+            diagnosticOutcome = "blocked-permission"
             Log.w(TAG, "Cannot show overlay: SYSTEM_ALERT_WINDOW permission missing")
             return
         }
 
         if (overlayView == null) {
-            initOverlayView()
+            try {
+                initOverlayView()
+            } catch (e: Exception) {
+                diagnosticOutcome = "initialize-exception"
+                OverlayDiagnostics.record(coalesce = true) { "overlay initialize=exception" }
+                throw e
+            }
         }
 
         val orientationChanged = updatePositionForOrientation()
@@ -132,6 +166,7 @@ class OverlayManager(private val context: Context) {
                 windowManager.addView(overlayView, params)
                 isAttached = true
             } catch (e: Exception) {
+                diagnosticOutcome = "attach-exception"
                 Log.e(TAG, "Failed to attach overlay window: ${e.message}", e)
                 return
             }
@@ -141,26 +176,31 @@ class OverlayManager(private val context: Context) {
             try {
                 windowManager.updateViewLayout(overlayView, params)
             } catch (e: Exception) {
+                diagnosticOutcome = "reposition-exception"
                 Log.w(TAG, "Failed to reposition overlay after orientation change", e)
             }
         }
 
         overlayView?.visibility = View.VISIBLE
+        if (diagnosticOutcome == "show-requested") diagnosticOutcome = "show-completed"
         updateOverlayVisuals(speechEngine.isRecording, speechEngine.isProcessing)
     }
 
     fun hide() {
+        diagnosticRequested = "hide"
         speechEngine.cancelRecording()
         hideTemporarily()
     }
 
     /** Hides only the floating view while another app/system surface is active; capture ownership is unchanged. */
     fun hideTemporarily() {
+        diagnosticRequested = "hide"
         cancelGesture?.invoke()
         microphoneDialog?.dismiss()
         pulseAnimator?.cancel()
         overlayView?.keepScreenOn = false
         overlayView?.visibility = View.GONE
+        diagnosticOutcome = "hide-completed"
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -342,6 +382,7 @@ class OverlayManager(private val context: Context) {
             if (speechEngine.isLocalSessionActive &&
                 (speechEngine.isRecording || speechEngine.isProcessing) &&
                 !speechEngine.isExternalSessionActive) {
+                OverlayDiagnostics.record { "dictation discard requested" }
                 speechEngine.cancelRecording()
                 root.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                 root.announceForAccessibility("Dictation discarded")
@@ -487,6 +528,7 @@ class OverlayManager(private val context: Context) {
     private fun onOverlayClicked() {
         if (!prefs.serviceEnabled || speechEngine.isExternalSessionActive) return
         if (speechEngine.currentStatus == "starting") {
+            OverlayDiagnostics.record { "dictation stop requested while starting" }
             speechEngine.stopRecording()
             overlayView?.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
             overlayView?.announceForAccessibility("Recording stopped. Transcribing.")
@@ -494,6 +536,7 @@ class OverlayManager(private val context: Context) {
         }
         if (speechEngine.isProcessing) return
         if (speechEngine.isRecording) {
+            OverlayDiagnostics.record { "dictation stop requested" }
             speechEngine.stopRecording()
             overlayView?.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
             overlayView?.announceForAccessibility("Recording stopped. Transcribing.")
@@ -501,6 +544,8 @@ class OverlayManager(private val context: Context) {
             onLocalDictationStarted?.invoke()
             overlayView?.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
             overlayView?.announceForAccessibility("Starting recording. Tap to stop and transcribe. Hold to discard.")
+        } else {
+            OverlayDiagnostics.record { "dictation start rejected" }
         }
     }
 
@@ -601,6 +646,9 @@ class OverlayManager(private val context: Context) {
     }
 
     fun destroy() {
+        diagnosticRequested = "destroy"
+        diagnosticOutcome = "destroy-requested"
+        OverlayDiagnostics.record { "overlay destroy requested" }
         cancelGesture?.invoke()
         microphoneDialog?.dismiss()
         persistOverlayPositionIfNeeded()
@@ -615,10 +663,14 @@ class OverlayManager(private val context: Context) {
         if (isAttached && overlayView != null) {
             try {
                 windowManager.removeView(overlayView)
+                OverlayDiagnostics.record { "overlay detach=accepted" }
             } catch (_: Exception) {
+                diagnosticOutcome = "detach-exception"
+                OverlayDiagnostics.record { "overlay detach=exception" }
             }
             isAttached = false
         }
         overlayView = null
+        if (diagnosticOutcome == "destroy-requested") diagnosticOutcome = "destroy-completed"
     }
 }

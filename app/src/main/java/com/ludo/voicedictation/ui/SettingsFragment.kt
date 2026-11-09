@@ -1,23 +1,35 @@
 package com.ludo.voicedictation.ui
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.PersistableBundle
 import android.provider.Settings
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.LinearLayout
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.checkbox.MaterialCheckBox
 import com.ludo.voicedictation.R
 import com.ludo.voicedictation.accessibility.DictationAccessibilityService
+import com.ludo.voicedictation.accessibility.OverlayDiagnostics
 import com.ludo.voicedictation.asr.SpeechEngine
 import com.ludo.voicedictation.asr.TranscriptFilter
 import com.ludo.voicedictation.data.AppPreferences
@@ -40,6 +52,14 @@ class SettingsFragment : Fragment() {
     private lateinit var speechEngine: SpeechEngine
 
     private var isDownloading = false
+    private val diagnosticsRefreshHandler = Handler(Looper.getMainLooper())
+    private val diagnosticsRefresh = object : Runnable {
+        override fun run() {
+            if (_binding == null) return
+            updateOverlayDiagnostics()
+            diagnosticsRefreshHandler.postDelayed(this, 5_000L)
+        }
+    }
 
     private val micPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -92,6 +112,7 @@ class SettingsFragment : Fragment() {
         setupPermissions()
         setupSliders()
         setupFocusAndOverlayBehavior()
+        setupOverlayDiagnostics()
         setupTranscriptRemoval()
         setupAppUpdates()
     }
@@ -101,6 +122,13 @@ class SettingsFragment : Fragment() {
         updatePermissionsStatus()
         updateModelStatus()
         updateVadControls()
+        diagnosticsRefreshHandler.removeCallbacks(diagnosticsRefresh)
+        diagnosticsRefresh.run()
+    }
+
+    override fun onPause() {
+        diagnosticsRefreshHandler.removeCallbacks(diagnosticsRefresh)
+        super.onPause()
     }
 
     private fun setupModelSelection() {
@@ -368,6 +396,97 @@ class SettingsFragment : Fragment() {
             prefs.avoidAutofillOverlayCollisions = enabled
             DictationAccessibilityService.instance?.refreshServiceState()
         }
+    }
+
+    private fun setupOverlayDiagnostics() {
+        binding.btnOverlayDiagnosticsStart.setOnClickListener {
+            // The backend deliberately exposes no has-report query. Always warn before replacing it.
+            val context = requireContext()
+            val padding = (24 * resources.displayMetrics.density).toInt()
+            val checkbox = MaterialCheckBox(context).apply {
+                setText(R.string.overlay_diagnostics_unverified_opt_in)
+                isChecked = false
+            }
+            val content = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(padding, 0, padding, 0)
+                addView(TextView(context).apply { setText(R.string.overlay_diagnostics_start_warning) })
+                addView(checkbox)
+            }
+            MaterialAlertDialogBuilder(context)
+                .setTitle(R.string.overlay_diagnostics_start_title)
+                .setView(ScrollView(context).apply { addView(content) })
+                .setPositiveButton(R.string.overlay_diagnostics_start) { _, _ ->
+                    OverlayDiagnostics.start(includeUnverifiedPackages = checkbox.isChecked)
+                    captureOverlayDiagnosticsSnapshot()
+                    updateOverlayDiagnostics()
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        }
+        binding.btnOverlayDiagnosticsStop.setOnClickListener {
+            OverlayDiagnostics.stop()
+            updateOverlayDiagnostics()
+        }
+        binding.btnOverlayDiagnosticsClear.setOnClickListener {
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle(R.string.overlay_diagnostics_clear_title)
+                .setMessage(R.string.overlay_diagnostics_clear_warning)
+                .setPositiveButton(R.string.overlay_diagnostics_clear) { _, _ ->
+                    OverlayDiagnostics.clear()
+                    if (OverlayDiagnostics.isRecording()) captureOverlayDiagnosticsSnapshot()
+                    updateOverlayDiagnostics()
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        }
+        binding.btnOverlayDiagnosticsView.setOnClickListener {
+            val context = requireContext()
+            val padding = (24 * resources.displayMetrics.density).toInt()
+            val text = TextView(context).apply {
+                this.text = OverlayDiagnostics.report()
+                setTextIsSelectable(true)
+                setPadding(padding, padding / 2, padding, padding / 2)
+            }
+            val scroll = ScrollView(context).apply { addView(text) }
+            MaterialAlertDialogBuilder(context)
+                .setTitle(R.string.overlay_diagnostics_timeline_title)
+                .setView(scroll)
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+            updateOverlayDiagnostics()
+        }
+        binding.btnOverlayDiagnosticsCopy.setOnClickListener {
+            val context = requireContext()
+            val clip = ClipData.newPlainText(
+                getString(R.string.overlay_diagnostics_title), OverlayDiagnostics.report()
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                clip.description.extras = PersistableBundle().apply {
+                    putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                }
+            }
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(clip)
+            Toast.makeText(context, R.string.overlay_diagnostics_copied, Toast.LENGTH_SHORT).show()
+            updateOverlayDiagnostics()
+        }
+        updateOverlayDiagnostics()
+    }
+
+    private fun captureOverlayDiagnosticsSnapshot() {
+        val service = DictationAccessibilityService.instance
+        if (service != null) service.recordInitialDiagnosticsSnapshot()
+        else OverlayDiagnostics.snapshot { "initial snapshot: service unavailable" }
+    }
+
+    private fun updateOverlayDiagnostics() {
+        if (_binding == null) return
+        val recording = OverlayDiagnostics.isRecording()
+        binding.tvOverlayDiagnosticsStatus.setText(
+            if (recording) R.string.overlay_diagnostics_recording else R.string.overlay_diagnostics_not_recording
+        )
+        binding.btnOverlayDiagnosticsStop.isEnabled = recording
     }
 
     private fun setupAppUpdates() {
