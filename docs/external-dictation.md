@@ -42,8 +42,10 @@ The published v1.2.5 APK raises the live capture cap to ten minutes and adds a b
   Hermes activity. Use `Context.BIND_AUTO_CREATE`, plus
   `Context.BIND_INCLUDE_CAPABILITIES` on API 30+ for live START so the visible client's microphone
   capability is propagated to the bound service. This path does not start a
-  foreground service. Hermes must CANCEL and unbind when it backgrounds; permission
-  denial or microphone restrictions are reported as ERROR, never replaced by cloud ASR.
+  foreground service. The client must follow its current owner, lifecycle and capture
+  authorization rules when backgrounding; do not assume every transient pause must
+  cancel an owned capture or authorize sending after resume. Permission denial or
+  microphone restrictions are reported as ERROR, never replaced by cloud ASR.
 
 No public broadcast, PendingIntent or arbitrary result intent is used. Results go
 only to the supplied Messenger. No external transcription is injected through
@@ -138,9 +140,11 @@ Use a fresh UUID and command 4 for each new file; do not precede it with START.
 ## Events
 
 All events are `Message`s sent to `replyTo`, with `data.session_id` (String) and
-`data.protocol_version` (Int, always `1`). Hermes must filter both fields before
-updating UI or submitting a prompt; callbacks from cancelled/stale sessions must
-be ignored.
+`data.protocol_version` (Int, always `1`). The client must authenticate each event's
+`Message.sendingUid` against the verified Voice Dictation service UID and filter both
+fields before updating UI or submitting a prompt; callbacks from cancelled/stale
+sessions must be ignored. Verify the current client and provider implementation when
+changing either side.
 
 | `Message.what` | Name | Additional Bundle key | Meaning |
 | --- | --- | --- | --- |
@@ -181,11 +185,15 @@ Timeout emits ERROR, stops capture and discards pending output.
 Clients should allow **five minutes after STOP** for authoritative final processing
 (or after command 4 for a completed file), while retaining the total fifteen-minute
 session bound including cap-wait. This is a recommended client deadline, not a
-performance guarantee; slower devices can still time out. Do not submit a draft on timeout. Genuine activity
-backgrounding, unbind and explicit cancellation must still cancel promptly.
+performance guarantee; slower devices can still time out. Do not submit a draft on timeout.
+Explicit cancellation, Binder death, final unbind and owner teardown must still suppress
+output promptly; activity lifecycle decisions belong to the current client capture policy.
 
-Hermes should focus its text composer and START on the first power-long-press;
-on the next press, STOP and wait for RESULT, then submit that final text once.
+For the power-button flow, Hermes may START on the first press and STOP on the next,
+then await RESULT. Submission is a client-owned decision, not an unconditional IPC
+effect: verify the exact target and current lock, interruption, existing draft and
+attachment/review fences before sending; otherwise preserve the result for review.
+Inspect the current client path, since different entry points may use different rules.
 It can unbind immediately on RESULT or a terminal session ERROR: success is not
 emitted before decoding and cleanup finish. For explicit cancellation, send
 CANCEL with `replyTo` set, clear the client session locally, and unbind without
