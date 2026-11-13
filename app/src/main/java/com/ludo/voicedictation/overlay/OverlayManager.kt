@@ -7,6 +7,7 @@ import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.content.Context
 import android.content.ComponentCallbacks
+import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.os.Build
@@ -51,6 +52,13 @@ class OverlayManager(private val context: Context) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val prefs = AppPreferences(context)
     private val speechEngine = SpeechEngine.getInstance(context)
+    private val transcriptPreview = LiveTranscriptOverlay(context)
+    private val preferenceStore = context.getSharedPreferences("voice_dictation_prefs", Context.MODE_PRIVATE)
+    private var previewSessionActive = false
+    private var previewGeneration = 0L
+    private val previewPreferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        if (previewSessionActive && (!prefs.serviceEnabled || !prefs.streamingPreviewEnabled)) stopPreview()
+    }
 
     private var overlayView: View? = null
     private var params: WindowManager.LayoutParams? = null
@@ -69,7 +77,10 @@ class OverlayManager(private val context: Context) {
     private var microphoneDialog: AlertDialog? = null
     private val configurationCallbacks = object : ComponentCallbacks {
         override fun onConfigurationChanged(newConfig: Configuration) {
-            overlayView?.post { refreshAppearance() }
+            overlayView?.post {
+                refreshAppearance()
+                if (canDisplayPreview()) transcriptPreview.refresh() else transcriptPreview.clear()
+            }
         }
         override fun onLowMemory() = Unit
     }
@@ -80,6 +91,9 @@ class OverlayManager(private val context: Context) {
 
     init {
         speechEngine.onStateChanged = { recording, processing ->
+            if (previewSessionActive && (!speechEngine.isLocalSessionActive ||
+                    (!recording && speechEngine.currentStatus != "starting") ||
+                    speechEngine.currentStatus == "recording_limit")) stopPreview()
             OverlayDiagnostics.record { "dictation state recording=$recording processing=$processing external=${speechEngine.isExternalSessionActive}" }
             if (recording || processing) microphoneDialog?.dismiss()
             if (speechEngine.isExternalSessionActive && canShowExternalStatus()) showExternalStatus("dictation-state")
@@ -89,14 +103,7 @@ class OverlayManager(private val context: Context) {
                 overlayView?.post { onSessionIdle?.invoke() }
             }
         }
-        speechEngine.onSpeechActivityChanged = {
-            if (speechEngine.isExternalSessionActive && canShowExternalStatus()) showExternalStatus("speech-activity")
-            else updateOverlayVisuals(speechEngine.isRecording, speechEngine.isProcessing)
-        }
-        speechEngine.onChunkProcessingChanged = {
-            if (speechEngine.isExternalSessionActive && canShowExternalStatus()) showExternalStatus("chunk-processing")
-            else updateOverlayVisuals(speechEngine.isRecording, speechEngine.isProcessing)
-        }
+
         speechEngine.onRecordingLimit = {
             val message = "10-minute limit reached. Tap Stop to transcribe, or hold to discard."
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
@@ -122,6 +129,33 @@ class OverlayManager(private val context: Context) {
         return powerManager.isInteractive && !keyguardManager.isKeyguardLocked
     }
 
+    private fun canDisplayPreview(): Boolean = previewSessionActive && prefs.serviceEnabled &&
+        prefs.streamingPreviewEnabled && hasOverlayPermission() && canShowExternalStatus() &&
+        speechEngine.isLocalSessionActive && !speechEngine.isExternalSessionActive &&
+        speechEngine.isRecording && !speechEngine.isProcessing && speechEngine.currentStatus == "recording" &&
+        overlayView?.visibility == View.VISIBLE && isAttached
+
+    /** Subscribe only to the local session started by this overlay, never IPC or History. */
+    private fun startPreview() {
+        if (!prefs.streamingPreviewEnabled || !speechEngine.isLocalSessionActive) return
+        previewSessionActive = true
+        val generation = ++previewGeneration
+        preferenceStore.registerOnSharedPreferenceChangeListener(previewPreferenceListener)
+        speechEngine.onPreviewTextChanged = { text ->
+            if (generation == previewGeneration) {
+                if (canDisplayPreview()) transcriptPreview.showText(text) else transcriptPreview.clear()
+            }
+        }
+    }
+
+    private fun stopPreview() {
+        previewSessionActive = false
+        previewGeneration++
+        speechEngine.onPreviewTextChanged = null
+        preferenceStore.unregisterOnSharedPreferenceChangeListener(previewPreferenceListener)
+        transcriptPreview.clear()
+    }
+
     private fun showExternalStatus(trigger: String) {
         val before = try { if (OverlayDiagnostics.isRecording()) diagnosticState() else null } catch (_: Exception) { null }
         show()
@@ -139,10 +173,12 @@ class OverlayManager(private val context: Context) {
         diagnosticRequested = "show"
         diagnosticOutcome = "show-requested"
         if (!prefs.serviceEnabled) {
+            stopPreview()
             diagnosticOutcome = "blocked-disabled"
             return
         }
         if (!hasOverlayPermission()) {
+            stopPreview()
             diagnosticOutcome = "blocked-permission"
             Log.w(TAG, "Cannot show overlay: SYSTEM_ALERT_WINDOW permission missing")
             return
@@ -188,6 +224,7 @@ class OverlayManager(private val context: Context) {
 
     fun hide() {
         diagnosticRequested = "hide"
+        stopPreview()
         speechEngine.cancelRecording()
         hideTemporarily()
     }
@@ -195,6 +232,7 @@ class OverlayManager(private val context: Context) {
     /** Hides only the floating view while another app/system surface is active; capture ownership is unchanged. */
     fun hideTemporarily() {
         diagnosticRequested = "hide"
+        transcriptPreview.clear()
         cancelGesture?.invoke()
         microphoneDialog?.dismiss()
         pulseAnimator?.cancel()
@@ -355,6 +393,24 @@ class OverlayManager(private val context: Context) {
         var touchActive = false
         var consumeRelease = false
         var holdWasDiscard = false
+        fun updateDraggedPosition(event: MotionEvent) {
+            val oldX = lp.x
+            val oldY = lp.y
+            // Use raw-coordinate deltas with the original window offset; no status-bar
+            // offset belongs in a delta, and the window is laid out in the screen.
+            lp.x = initialX + (event.rawX - initialTouchX).toInt()
+            lp.y = initialY + (event.rawY - initialTouchY).toInt()
+            clampPosition()
+            if (lp.x == oldX && lp.y == oldY) return
+            try {
+                windowManager.updateViewLayout(root, lp)
+                hasUncommittedPosition = true
+            } catch (e: Exception) {
+                lp.x = oldX
+                lp.y = oldY
+                Log.w(TAG, "Failed to update floating-button position", e)
+            }
+        }
         val hold = Runnable {
             if (touchActive && !isDragging && !consumeRelease) {
                 // Never reinterpret a hold if ownership changed while the finger was down.
@@ -383,6 +439,7 @@ class OverlayManager(private val context: Context) {
                 (speechEngine.isRecording || speechEngine.isProcessing) &&
                 !speechEngine.isExternalSessionActive) {
                 OverlayDiagnostics.record { "dictation discard requested" }
+                stopPreview()
                 speechEngine.cancelRecording()
                 root.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                 root.announceForAccessibility("Dictation discarded")
@@ -423,15 +480,7 @@ class OverlayManager(private val context: Context) {
                             isDragging = true
                             root.removeCallbacks(hold)
                         }
-                        if (isDragging) {
-                            val oldX = lp.x
-                            val oldY = lp.y
-                            lp.x = initialX + dx.toInt()
-                            lp.y = initialY + dy.toInt()
-                            clampPosition()
-                            if (lp.x != oldX || lp.y != oldY) hasUncommittedPosition = true
-                            try { windowManager.updateViewLayout(overlayView, lp) } catch (_: Exception) { }
-                        }
+                        if (isDragging) updateDraggedPosition(event)
                     }
                     true
                 }
@@ -439,6 +488,7 @@ class OverlayManager(private val context: Context) {
                     root.removeCallbacks(hold)
                     if (touchActive && !consumeRelease) {
                         if (isDragging) {
+                            updateDraggedPosition(event)
                             persistOverlayPositionIfNeeded()
                         } else root.performClick()
                     }
@@ -529,6 +579,7 @@ class OverlayManager(private val context: Context) {
         if (!prefs.serviceEnabled || speechEngine.isExternalSessionActive) return
         if (speechEngine.currentStatus == "starting") {
             OverlayDiagnostics.record { "dictation stop requested while starting" }
+            stopPreview()
             speechEngine.stopRecording()
             overlayView?.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
             overlayView?.announceForAccessibility("Recording stopped. Transcribing.")
@@ -537,15 +588,21 @@ class OverlayManager(private val context: Context) {
         if (speechEngine.isProcessing) return
         if (speechEngine.isRecording) {
             OverlayDiagnostics.record { "dictation stop requested" }
+            stopPreview()
             speechEngine.stopRecording()
             overlayView?.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
             overlayView?.announceForAccessibility("Recording stopped. Transcribing.")
-        } else if (speechEngine.startRecording()) {
-            onLocalDictationStarted?.invoke()
-            overlayView?.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
-            overlayView?.announceForAccessibility("Starting recording. Tap to stop and transcribe. Hold to discard.")
         } else {
-            OverlayDiagnostics.record { "dictation start rejected" }
+            // Retire the prior generation before even attempting a replacement session.
+            stopPreview()
+            if (speechEngine.startRecording()) {
+                startPreview()
+                onLocalDictationStarted?.invoke()
+                overlayView?.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+                overlayView?.announceForAccessibility("Starting recording. Tap to stop and transcribe. Hold to discard.")
+            } else {
+                OverlayDiagnostics.record { "dictation start rejected" }
+            }
         }
     }
 
@@ -558,34 +615,24 @@ class OverlayManager(private val context: Context) {
             externalSession && speechEngine.currentStatus == "processing" -> "Processing Hermes dictation"
             externalSession && speechEngine.currentStatus == "starting" -> "Starting Hermes dictation"
             externalSession && speechEngine.isAwaitingStop -> "Recording limit reached; stop or cancel in Hermes"
-            externalSession && isRecording && speechEngine.speechActivityDetectionDisabled -> "Recording controlled by Hermes; speech detection disabled for streaming"
-            externalSession && isRecording && !speechEngine.speechActivityDetectionAvailable -> "Recording controlled by Hermes; speech detection unavailable"
-            externalSession && isRecording && speechEngine.isSpeechDetected -> "Speech detected; recording controlled by Hermes"
-            externalSession && isRecording -> "No speech detected; recording controlled by Hermes"
+            externalSession && isRecording -> "Recording controlled by Hermes"
             externalSession -> "Dictation controlled by Hermes"
             speechEngine.currentStatus == "polishing" -> "Polishing dictated text"
             speechEngine.currentStatus == "starting" -> "Starting recording. Tap to stop and transcribe. Hold to discard."
             speechEngine.currentStatus == "loading" -> "Loading recognition model"
             isProcessing -> "Transcribing recording"
             speechEngine.isAwaitingStop -> "Recording limit reached. Tap to transcribe. Hold to discard."
-            isRecording && speechEngine.speechActivityDetectionDisabled -> "Recording. Speech detection disabled for streaming. Tap to stop; hold to discard."
-            isRecording && !speechEngine.speechActivityDetectionAvailable -> "Recording. Speech detection unavailable. Tap to stop; hold to discard."
-            isRecording && speechEngine.isSpeechDetected -> "Speech detected. Recording. Tap to stop; hold to discard."
             isRecording -> "Recording. Tap to stop and transcribe. Hold to discard."
             else -> "Ready to record. Hold for microphone selection."
         }
-        root.contentDescription = if (isRecording && !externalSession && speechEngine.isChunkProcessing) {
-            "${root.contentDescription} Transcribing a chunk."
-        } else root.contentDescription
+
         root.keepScreenOn = (isRecording || isProcessing) && !speechEngine.isExternalSessionActive &&
             root.visibility == View.VISIBLE
         val btnCircle = root.findViewById<FrameLayout>(R.id.btnOverlayCircle) ?: return
         val ivIcon = root.findViewById<ImageView>(R.id.ivOverlayIcon) ?: return
         val pbProcessing = root.findViewById<ProgressBar>(R.id.pbOverlayProcessing) ?: return
         val pulseRing = root.findViewById<View>(R.id.pulseRing) ?: return
-        ivIcon.imageTintList = context.getColorStateList(
-            if (isRecording && !externalSession && speechEngine.isChunkProcessing) R.color.accent else android.R.color.white
-        )
+        ivIcon.imageTintList = context.getColorStateList(android.R.color.white)
         pbProcessing.indeterminateTintList = context.getColorStateList(
             if (speechEngine.currentStatus == "polishing") R.color.success else R.color.accent
         )
@@ -603,11 +650,7 @@ class OverlayManager(private val context: Context) {
             pbProcessing.visibility = View.GONE
             ivIcon.visibility = View.VISIBLE
             ivIcon.setImageResource(if (externalSession) R.drawable.ic_mic else R.drawable.ic_stop)
-            val recordingBackground = if (!speechEngine.speechActivityDetectionAvailable || speechEngine.isSpeechDetected) {
-                R.drawable.bg_overlay_recording
-            } else {
-                R.drawable.bg_overlay_no_speech
-            }
+            val recordingBackground = R.drawable.bg_overlay_recording
             btnCircle.setBackgroundResource(recordingBackground)
             pulseRing.setBackgroundResource(recordingBackground)
             root.alpha = 1.0f
@@ -649,6 +692,7 @@ class OverlayManager(private val context: Context) {
         diagnosticRequested = "destroy"
         diagnosticOutcome = "destroy-requested"
         OverlayDiagnostics.record { "overlay destroy requested" }
+        stopPreview()
         cancelGesture?.invoke()
         microphoneDialog?.dismiss()
         persistOverlayPositionIfNeeded()

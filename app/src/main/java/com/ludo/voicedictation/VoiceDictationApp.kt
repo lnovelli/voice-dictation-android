@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
 import com.ludo.voicedictation.data.AppPreferences
+import java.io.File
 
 class VoiceDictationApp : Application() {
 
@@ -16,6 +17,12 @@ class VoiceDictationApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Remove the obsolete bundled-model cache from older installations only.
+        File(filesDir, "models/vad").let { directory ->
+            File(directory, "silero_vad.int8.onnx").delete()
+            File(directory, "silero_vad.int8.onnx.tmp").delete()
+            directory.delete() // Succeeds only when empty.
+        }
         AppPreferences(this).cleanupOrphanedHistoryAudio()
         createNotificationChannels()
     }

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- Model files are too large for the 25 MB per-app cloud quota. -->
+        <exclude domain="file" path="models/" />
+    </cloud-backup>
+    <!-- No device-transfer rules: Android can transfer the models directly. -->
+</data-extraction-rules>

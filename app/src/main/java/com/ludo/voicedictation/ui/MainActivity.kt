@@ -37,12 +37,12 @@ class MainActivity : AppCompatActivity() {
                     tab.setIcon(R.drawable.ic_vocabulary)
                 }
                 2 -> {
-                    tab.text = getString(R.string.tab_history)
-                    tab.setIcon(R.drawable.ic_history)
-                }
-                3 -> {
                     tab.text = getString(R.string.tab_polishing)
                     tab.setIcon(R.drawable.ic_polish)
+                }
+                3 -> {
+                    tab.text = getString(R.string.tab_history)
+                    tab.setIcon(R.drawable.ic_history)
                 }
             }
         }.attach()
@@ -55,8 +55,8 @@ class MainActivity : AppCompatActivity() {
             return when (position) {
                 0 -> SettingsFragment()
                 1 -> VocabularyFragment()
-                2 -> HistoryFragment()
-                3 -> PolishingFragment()
+                2 -> PolishingFragment()
+                3 -> HistoryFragment()
                 else -> SettingsFragment()
             }
         }

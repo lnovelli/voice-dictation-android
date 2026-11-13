@@ -11,8 +11,8 @@ android {
         applicationId = "com.ludo.voicedictation"
         minSdk = 26
         targetSdk = 34
-        versionCode = 57
-        versionName = "1.2.36"
+        versionCode = 67
+        versionName = "1.2.46"
 
         ndk {
             abiFilters.add("arm64-v8a")
@@ -37,17 +37,21 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
     buildFeatures {
         viewBinding = true
     }
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
 dependencies {
     testImplementation("junit:junit:4.13.2")
-    implementation(files("libs/sherpa-onnx-1.13.8.aar"))
+    implementation(files("libs/sherpa-onnx-2.0.1.aar"))
+    implementation("com.google.mlkit:genai-speech-recognition:1.0.0-alpha2")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")

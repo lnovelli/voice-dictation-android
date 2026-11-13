@@ -18,7 +18,6 @@ import com.ludo.voicedictation.data.AppPreferences
 import com.ludo.voicedictation.data.StringReplacementRule
 import com.ludo.voicedictation.data.StringReplacementRules
 import com.ludo.voicedictation.databinding.TabVocabularyBinding
-import com.ludo.voicedictation.model.ModelInfo
 import java.util.Locale
 
 class VocabularyFragment : Fragment() {
@@ -46,18 +45,17 @@ class VocabularyFragment : Fragment() {
         prefs = AppPreferences(context)
         speechEngine = SpeechEngine.getInstance(context)
 
+        binding.switchVocabularySpellingVocab.isChecked = prefs.vocabularySpellingEnabled
+        binding.switchVocabularySpellingVocab.setOnCheckedChangeListener { _, enabled ->
+            prefs.vocabularySpellingEnabled = enabled
+            speechEngine.reloadVocabulary()
+        }
         setupRecyclerView()
         setupAddWord()
         setupClearAll()
         setupAcousticControls()
-        setupTranscriptFormattingControls()
         setupStringReplacements()
         refreshList()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        if (_binding != null && ::prefs.isInitialized) updateAcousticControlsForModel()
     }
 
     private fun setupAcousticControls() {
@@ -76,10 +74,10 @@ class VocabularyFragment : Fragment() {
 
         }
         updateLabels()
-        updateAcousticControlsForModel()
+        updateAcousticControls()
         binding.switchAcousticVocabulary.setOnCheckedChangeListener { _, enabled ->
             prefs.acousticVocabularyEnabled = enabled
-            updateAcousticControlsForModel()
+            updateAcousticControls()
         }
         binding.sliderMaxActivePaths.addOnChangeListener { _, value, fromUser ->
             if (fromUser) prefs.acousticMaxActivePaths = value.toInt()
@@ -92,41 +90,10 @@ class VocabularyFragment : Fragment() {
 
     }
 
-    private fun setupTranscriptFormattingControls() {
-        binding.switchStaticNumericCorrections.isChecked = prefs.staticNumericCorrectionsEnabled
-        binding.sliderPolishingMinimumWords.value = prefs.transcriptPolishingMinimumWords.toFloat()
-        binding.switchPolishingAutoNumberSequences.isChecked = prefs.transcriptPolishingAutoNumberSequences
-        updatePolishingMinimumWordsLabel()
-
-        binding.switchStaticNumericCorrections.setOnCheckedChangeListener { _, enabled ->
-            prefs.staticNumericCorrectionsEnabled = enabled
-        }
-        binding.sliderPolishingMinimumWords.addOnChangeListener { _, value, fromUser ->
-            if (fromUser) prefs.transcriptPolishingMinimumWords = value.toInt()
-            updatePolishingMinimumWordsLabel()
-        }
-        binding.switchPolishingAutoNumberSequences.setOnCheckedChangeListener { _, enabled ->
-            prefs.transcriptPolishingAutoNumberSequences = enabled
-        }
-    }
-
-    private fun updatePolishingMinimumWordsLabel() {
-        binding.tvPolishingMinimumWords.text = getString(
-            R.string.polishing_minimum_words_value,
-            binding.sliderPolishingMinimumWords.value.toInt()
-        )
-    }
-
-    private fun updateAcousticControlsForModel() {
-        val streaming = ModelInfo.getModelById(prefs.selectedModelId).streaming
-        binding.switchAcousticVocabulary.isEnabled = !streaming
-        val enabled = prefs.acousticVocabularyEnabled && !streaming
+    private fun updateAcousticControls() {
+        val enabled = prefs.acousticVocabularyEnabled
         binding.sliderMaxActivePaths.isEnabled = enabled
         binding.sliderHotwordsScore.isEnabled = enabled
-        binding.tvAcousticVocabularyWarning.text = getString(
-            if (streaming) R.string.acoustic_vocabulary_streaming_notice
-            else R.string.acoustic_vocabulary_warning
-        )
     }
 
     private fun setupRecyclerView() {
@@ -184,6 +151,10 @@ class VocabularyFragment : Fragment() {
     }
 
     private fun setupStringReplacements() {
+        binding.switchStringReplacements.isChecked = prefs.stringReplacementEnabled
+        binding.switchStringReplacements.setOnCheckedChangeListener { _, enabled ->
+            prefs.stringReplacementEnabled = enabled
+        }
         replacementAdapter = StringReplacementAdapter(
             emptyList(),
             onEditClicked = { index -> showStringReplacementDialog(index) },

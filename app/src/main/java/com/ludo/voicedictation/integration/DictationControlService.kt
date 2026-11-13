@@ -147,7 +147,8 @@ class DictationControlService : Service() {
             !prefs.serviceEnabled -> "Enable dictation service in Voice Dictation Settings."
             audioFile == null && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ->
                 "Grant microphone permission to Voice Dictation."
-            !engine.isModelReady() -> "Download the selected model in Voice Dictation Settings."
+            prefs.selectedModelId != AppPreferences.MODEL_MLKIT_ADVANCED && !engine.isModelReady() ->
+                "Download the selected model in Voice Dictation Settings."
             else -> null
         }
         if (error != null) {

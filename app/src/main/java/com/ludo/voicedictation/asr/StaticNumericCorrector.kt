@@ -33,6 +33,22 @@ internal class StaticNumericCorrector {
         private val standaloneOnePattern = Regex("""(?<![\p{L}\p{M}])one(?![\p{L}\p{M}])""", RegexOption.IGNORE_CASE)
         private val numberPhraseSeparator = Regex("[\\s-]+")
         private val numericWords = numberWordValues.keys + scales.keys
+        private val decimalIntegerStartAlternatives = numericWords
+            .sortedByDescending { it.length }.joinToString("|") { Regex.escape(it) }
+        private val decimalIntegerAlternatives = (numericWords + "and")
+            .sortedByDescending { it.length }.joinToString("|") { Regex.escape(it) }
+        private val decimalDigitWords = numberWordValues.filterValues { it in 0L..9L }
+        private val decimalDigitAlternatives = decimalDigitWords.keys
+            .sortedByDescending { it.length }.joinToString("|") { Regex.escape(it) }
+        // Both sides are required. The fractional words are individual digits, not cardinal sums.
+        private val decimalPattern = Regex(
+            "(?<![\\p{L}\\p{M}\\p{N}.,])" +
+                "((?:\\d+|$decimalIntegerStartAlternatives)(?:[\\s-]+(?:\\d+|$decimalIntegerAlternatives))*)" +
+                "\\s+(point|comma)\\s+" +
+                "((?:\\d+|$decimalDigitAlternatives)(?:[\\s-]+(?:\\d+|$decimalDigitAlternatives))*)" +
+                "(?![\\p{L}\\p{M}\\p{N}]|[.,]\\d)",
+            RegexOption.IGNORE_CASE
+        )
 
         /** Detect two numeric values separated by no more than two word tokens. */
         fun containsNearbyNumbers(text: String): Boolean {
@@ -60,18 +76,67 @@ internal class StaticNumericCorrector {
             }
     }
 
-    fun apply(text: String): String = sequencePattern.replace(text) { match ->
-        val phrase = match.value
-        val prefix = text.substring(0, match.range.first)
-        val suffix = text.substring(match.range.last + 1)
-        val hasClockSuffix = clockSuffixPattern.matches(suffix)
-        val clockContext = hasClockSuffix || clockPrefixPattern.containsMatchIn(prefix)
-        val timeParts = phrase.lowercase(Locale.ROOT).split(numberPhraseSeparator)
-        when {
-            phrase.equals("one", ignoreCase = true) -> phrase
-            clockContext -> formatClock(timeParts, hasClockSuffix) ?: parse(phrase) ?: phrase
-            else -> parse(phrase) ?: phrase
+    fun apply(text: String): String {
+        val decimals = decimalPattern.replace(text) { match ->
+            val integerPhrase = match.groupValues[1]
+            val tokens = integerPhrase.lowercase(Locale.ROOT).split(numberPhraseSeparator)
+            // A conjunction between independent numbers is not part of the integer.
+            val conjunction = tokens.indexOfLast { it == "and" }
+            val independentConjunction = conjunction >= 0 &&
+                (tokens.take(conjunction).none { it in scales } ||
+                    "and" in tokens.take(conjunction))
+            val integerStart = if (independentConjunction) {
+                val andToken = tokenPattern.findAll(integerPhrase).last { it.value.equals("and", true) }
+                integerPhrase.indexOfFirstAfter(andToken.range.last + 1)
+            } else 0
+            val integer = decimalInteger(integerPhrase.substring(integerStart))
+            if (integer == null) {
+                match.value
+            } else {
+                val fraction = match.groupValues[3].lowercase(Locale.ROOT)
+                    .split(numberPhraseSeparator).joinToString("") { token ->
+                        decimalDigitWords[token]?.toString() ?: token
+                    }
+                val separator = if (match.groupValues[2].equals("point", true)) "." else ","
+                integerPhrase.substring(0, integerStart) + integer + separator + fraction
+            }
         }
+        return sequencePattern.replace(decimals) { match ->
+            val phrase = match.value
+            val prefix = decimals.substring(0, match.range.first)
+            val suffix = decimals.substring(match.range.last + 1)
+            val hasClockSuffix = clockSuffixPattern.matches(suffix)
+            val clockContext = hasClockSuffix || clockPrefixPattern.containsMatchIn(prefix)
+            val timeParts = phrase.lowercase(Locale.ROOT).split(numberPhraseSeparator)
+            when {
+                phrase.equals("one", ignoreCase = true) -> phrase
+                clockContext -> formatClock(timeParts, hasClockSuffix) ?: parse(phrase) ?: phrase
+                else -> parse(phrase) ?: phrase
+            }
+        }
+    }
+
+    private fun String.indexOfFirstAfter(start: Int): Int {
+        var index = start
+        while (index < length && (this[index].isWhitespace() || this[index] == '-')) index++
+        return index
+    }
+
+    private fun decimalInteger(phrase: String): String? {
+        val tokens = phrase.lowercase(Locale.ROOT).split(numberPhraseSeparator)
+        if (tokens.any { it.isEmpty() }) return null
+        if (tokens.all { it in decimalDigitWords || it.all(Char::isDigit) }) {
+            return tokens.joinToString("") { decimalDigitWords[it]?.toString() ?: it }
+        }
+        if (tokens.any { it.any(Char::isDigit) }) return null
+        // The existing parser may return separate adjacent values; they are not one integer.
+        // Its final scale needs an explicit zero group, e.g. "one thousand zero".
+        val parsed = if (tokens.last() in scales && tokens.last() != "hundred") {
+            parse("$phrase zero")
+        } else {
+            parse(phrase)
+        }
+        return parsed?.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
     }
 
     private fun formatClock(parts: List<String>, hasAmPm: Boolean): String? {

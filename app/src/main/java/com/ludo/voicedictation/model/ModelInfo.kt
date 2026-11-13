@@ -14,25 +14,20 @@ data class ModelInfo(
     val archiveSha256: String? = null
 ) {
     companion object {
-        val PARAKEET_V2 = ModelInfo(
-            id = "parakeet_v2",
-            displayName = "Parakeet TDT 0.6B v2 (English)",
-            description = "Trained on 36k hours of English speech. Excellent accuracy, punctuation, and capitalization.",
-            archiveUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
-            dirName = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"
+        val NEMOTRON_STREAMING_560MS = ModelInfo(
+            id = "nemotron_3_5_streaming_560ms",
+            displayName = "Nemotron 3.5 ASR 0.6B (Multilingual, 560 ms)",
+            description = "Multilingual streaming recognition with automatic language detection; 560 ms model chunk size.",
+            archiveUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11.tar.bz2",
+            dirName = "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11",
+            streaming = true,
+            archiveSha256 = "c6bf5e0df765f9d5b43bc9e0536d4b4b3e7d40bdf5ecf13e45f134c51c05ae3a"
         )
 
-        val PARAKEET_V3 = ModelInfo(
-            id = "parakeet_v3",
-            displayName = "Parakeet TDT 0.6B v3 (Multilingual)",
-            description = "Supports 25 European languages with punctuation and capitalization.",
-            archiveUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
-            dirName = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
-        )
-
+        // Keep the existing ID and directory so an installed 1120 ms model remains selected.
         val NEMOTRON_STREAMING = ModelInfo(
             id = "nemotron_3_5_streaming",
-            displayName = "Nemotron 3.5 ASR 0.6B (Multilingual, Streaming)",
+            displayName = "Nemotron 3.5 ASR 0.6B (Multilingual, 1120 ms)",
             description = "Multilingual streaming recognition with automatic language detection; 1120 ms model chunk size.",
             archiveUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-int8-2026-06-11.tar.bz2",
             dirName = "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-int8-2026-06-11",
@@ -42,9 +37,8 @@ data class ModelInfo(
 
         fun getModelById(id: String): ModelInfo {
             return when (id) {
-                PARAKEET_V3.id -> PARAKEET_V3
-                NEMOTRON_STREAMING.id -> NEMOTRON_STREAMING
-                else -> PARAKEET_V2
+                NEMOTRON_STREAMING_560MS.id -> NEMOTRON_STREAMING_560MS
+                else -> NEMOTRON_STREAMING
             }
         }
     }

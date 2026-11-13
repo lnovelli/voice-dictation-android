@@ -8,6 +8,8 @@ Visibility is not insertion authority. At local capture start retain only the el
 
 Use overlay permission only where needed, a non-focusable/non-touch-modal `TYPE_APPLICATION_OVERLAY`, and a consistent view-local coordinate space. Short tap finalizes local capture; long hold during capture discards or suppresses pending local output during processing. Distinguish drag with touch slop; a fired hold must latch so release cannot fire again, while CANCEL does not execute. Clean gesture/window state on UP, CANCEL, screen-off, service stop and exceptions. Opening a shade is not by itself cancellation. Preserve position pairs atomically on drag completion/cancellation/teardown, not synchronous writes on every MOVE; keep separate orientation positions and reachable bounds. Configuration preview exists only while resumed. External sessions remain owner-controlled.
 
+The optional live transcript preview is a separate movable, non-focusable overlay for local recording only, with at most two displayed lines. It can expose spoken content to anyone viewing the screen; do not log or persist preview text. Clear it on Stop, Cancel, lock, service shutdown and teardown, and prevent stale callbacks from reopening it. External IPC and History do not display their text in this overlay.
+
 For microphone selection, label system default as automatic; store a stable identity rather than transient device port, reject ambiguous/disconnected devices, and verify `getRoutedDevice` only after capture and its first buffer. Preferred routing is a request, not proof; do not start a recording just to discover the default.
 
 ## Opt-in diagnostics

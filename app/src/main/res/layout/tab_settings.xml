@@ -42,53 +42,36 @@
                 android:textStyle="bold"
                 android:layout_marginBottom="12dp" />
 
-            <RadioGroup
-                android:id="@+id/rgModelSelection"
+            <LinearLayout
+                android:orientation="vertical"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content">
 
-                <RadioButton
-                    android:id="@+id/rbModelV2"
+                <RadioGroup
+                    android:id="@+id/modelVariants"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/model_parakeet_v2"
-                    android:textColor="@color/text_primary"
-                    android:textSize="15sp"
-                    android:checked="true" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/model_parakeet_v2_desc"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="12sp"
-                    android:layout_marginStart="32dp"
-                    android:layout_marginBottom="12dp" />
-
-                <RadioButton
-                    android:id="@+id/rbModelV3"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/model_parakeet_v3"
-                    android:textColor="@color/text_primary"
-                    android:textSize="15sp" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/model_parakeet_v3_desc"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="12sp"
-                    android:layout_marginStart="32dp"
-                    android:layout_marginBottom="12dp" />
-
-                <RadioButton
-                    android:id="@+id/rbModelNemotron"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/model_nemotron_streaming"
-                    android:textColor="@color/text_primary"
-                    android:textSize="15sp" />
+                    android:orientation="vertical">
+                    <RadioButton
+                        android:id="@+id/model560ms"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Nemotron 3.5 streaming — 560 ms"
+                        android:textColor="@color/text_primary" />
+                    <RadioButton
+                        android:id="@+id/model1120ms"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Nemotron 3.5 streaming — 1.12 s"
+                        android:textColor="@color/text_primary" />
+                    <RadioButton
+                        android:id="@+id/modelMlkitAdvanced"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:enabled="false"
+                        android:text="@string/model_mlkit_advanced"
+                        android:textColor="@color/text_primary" />
+                </RadioGroup>
 
                 <TextView
                     android:layout_width="match_parent"
@@ -98,7 +81,79 @@
                     android:textSize="12sp"
                     android:layout_marginStart="32dp"
                     android:layout_marginBottom="12dp" />
-            </RadioGroup>
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/mlkit_details"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+                <TextView
+                    android:id="@+id/tvMlkitLocaleLabel"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:labelFor="@id/spinnerMlkitLocale"
+                    android:text="@string/mlkit_locale_label"
+                    android:textColor="@color/text_primary"
+                    android:visibility="gone" />
+                <Spinner
+                    android:id="@+id/spinnerMlkitLocale"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:visibility="gone" />
+                <TextView
+                    android:id="@+id/tvMlkitAvailability"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:accessibilityLiveRegion="polite"
+                    android:text="@string/mlkit_checking"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnCheckMlkit"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/mlkit_check_again" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/mlkit_diagnostics_title"
+                    android:textColor="@color/text_primary"
+                    android:textStyle="bold" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/mlkit_diagnostics_hint"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnMlkitDiagnosticsView"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/mlkit_diagnostics_view" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnMlkitDiagnosticsCopy"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/mlkit_diagnostics_copy" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnMlkitDiagnosticsClear"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/mlkit_diagnostics_clear" />
+                </LinearLayout>
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/tvAsrThreadsLabel"
@@ -131,53 +186,26 @@
                 android:layout_marginBottom="8dp" />
 
             <com.google.android.material.switchmaterial.SwitchMaterial
-                android:id="@+id/switchAlwaysTdtDither"
+                android:id="@+id/switchStreamingPreview"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:minHeight="48dp"
-                android:text="@string/always_tdt_dither_label"
+                android:text="@string/streaming_preview_title"
                 android:textColor="@color/text_primary" />
-
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/always_tdt_dither_description"
+                android:text="@string/streaming_preview_hint"
                 android:textColor="@color/text_secondary"
-                android:textSize="12sp"
-                android:layout_marginBottom="8dp" />
-
-            <com.google.android.material.switchmaterial.SwitchMaterial
-                android:id="@+id/switchTdtVadChunking"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:minHeight="48dp"
-                android:text="@string/tdt_vad_chunking_label"
-                android:textColor="@color/text_primary" />
-
+                android:textSize="12sp" />
             <TextView
+                android:id="@+id/tvStreamingPreviewError"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/tdt_vad_chunking_description"
-                android:textColor="@color/text_secondary"
+                android:accessibilityLiveRegion="polite"
+                android:text="@string/streaming_preview_unsupported"
+                android:textColor="@color/recording_red"
                 android:textSize="12sp"
-                android:layout_marginBottom="8dp" />
-
-            <com.google.android.material.switchmaterial.SwitchMaterial
-                android:id="@+id/switchTdtRemoveSilence"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:minHeight="48dp"
-                android:enabled="false"
-                android:text="@string/tdt_remove_silence_label"
-                android:textColor="@color/text_primary" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/tdt_remove_silence_description"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp"
-                android:layout_marginBottom="8dp" />
+                android:visibility="gone" />
 
             <!-- Model Status -->
             <LinearLayout
@@ -546,21 +574,6 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp" />
 
-            <com.google.android.material.switchmaterial.SwitchMaterial
-                android:id="@+id/switchVocabularySpelling"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/vocabulary_spelling_label"
-                android:textColor="@color/text_primary"
-                android:layout_marginTop="8dp" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/vocabulary_spelling_hint"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
-
         </LinearLayout>
 
         <!-- Floating button diagnostics, kept separate from normal preferences. -->
@@ -648,7 +661,7 @@
                 android:text="@string/overlay_diagnostics_clear" />
         </LinearLayout>
 
-        <!-- Final-only transcript cleanup, independent from acoustic decoding. -->
+        <!-- Portable settings export/import. -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -657,51 +670,34 @@
             android:padding="16dp"
             android:layout_marginBottom="16dp">
 
-            <com.google.android.material.switchmaterial.SwitchMaterial
-                android:id="@+id/switchTranscriptRemoval"
+            <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:minHeight="48dp"
-                android:text="@string/transcript_removal_title"
-                android:textColor="@color/text_primary" />
+                android:text="@string/settings_backup_title"
+                android:textColor="@color/text_primary"
+                android:textSize="18sp"
+                android:textStyle="bold" />
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/transcript_removal_hint"
+                android:layout_marginTop="8dp"
+                android:text="@string/settings_backup_hint"
                 android:textColor="@color/text_secondary"
-                android:textSize="12sp"
-                android:layout_marginBottom="8dp" />
-
-            <com.google.android.material.textfield.TextInputLayout
-                android:id="@+id/layoutTranscriptRemovals"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="@string/transcript_removal_list_hint">
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/etTranscriptRemovals"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:inputType="textMultiLine|textNoSuggestions"
-                    android:gravity="top|start"
-                    android:minLines="3"
-                    android:maxLines="6"
-                    android:maxLength="8192"
-                    android:importantForAutofill="no" />
-            </com.google.android.material.textfield.TextInputLayout>
+                android:textSize="12sp" />
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnSaveTranscriptRemovals"
+                android:id="@+id/btnExportSettings"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/transcript_removal_save" />
+                android:text="@string/settings_backup_export" />
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnResetTranscriptRemovals"
+                android:id="@+id/btnImportSettings"
                 style="@style/Widget.Material3.Button.OutlinedButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/transcript_removal_reset" />
+                android:text="@string/settings_backup_import" />
         </LinearLayout>
 
         <!-- In-App Updates Card -->

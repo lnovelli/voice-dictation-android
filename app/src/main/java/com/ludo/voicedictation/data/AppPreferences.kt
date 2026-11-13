@@ -18,14 +18,23 @@ class AppPreferences(context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    /** Plaintext backup: callers must protect the returned JSON, which contains private settings. */
+    fun exportSettingsJson(): String = SettingsBackup.export(prefs, appContext.getSharedPreferences(
+        "live_transcript_position", Context.MODE_PRIVATE
+    ))
+
+    /** Validate the entire backup before writing; returns the preference commit result. */
+    fun importSettingsJson(json: String): Boolean = SettingsBackup.restore(json, prefs, appContext.getSharedPreferences(
+        "live_transcript_position", Context.MODE_PRIVATE
+    ))
+
     companion object {
         private const val PREFS_NAME = "voice_dictation_prefs"
         private const val KEY_SELECTED_MODEL = "selected_model"
+        private const val KEY_MLKIT_LOCALE = "mlkit_locale_tag"
+        private const val KEY_STREAMING_PREVIEW = "streaming_preview_enabled"
         private const val KEY_ASR_THREAD_COUNT = "asr_thread_count"
-        private const val KEY_ALWAYS_TDT_DITHER = "always_tdt_dither"
         private const val KEY_PREFERRED_MICROPHONE = "preferred_microphone_v1"
-        private const val KEY_LIVE_TDT_VAD_CHUNKING = "live_tdt_vad_chunking"
-        private const val KEY_LIVE_TDT_REMOVE_SILENCE = "live_tdt_remove_silence"
         private const val KEY_HISTORY_LIMIT = "history_limit"
         private const val KEY_OVERLAY_OPACITY = "overlay_opacity"
         private const val KEY_OVERLAY_SCALE = "overlay_scale_percent"
@@ -47,6 +56,7 @@ class AppPreferences(context: Context) {
         private const val KEY_TRANSCRIPT_REMOVAL_ENABLED = "transcript_removal_enabled"
         private const val KEY_TRANSCRIPT_REMOVAL_WORDS = "transcript_removal_words"
         private const val KEY_STRING_REPLACEMENT_RULES = "string_replacement_rules"
+        private const val KEY_STRING_REPLACEMENT_ENABLED = "string_replacement_enabled"
         private const val KEY_TRANSCRIPT_POLISHING_ENABLED = "transcript_polishing_enabled"
         private const val KEY_TRANSCRIPT_POLISHING_ENDPOINT = "transcript_polishing_endpoint"
         private const val KEY_TRANSCRIPT_POLISHING_MODEL = "transcript_polishing_model"
@@ -59,10 +69,9 @@ class AppPreferences(context: Context) {
         const val DEFAULT_TRANSCRIPT_POLISHING_MODEL = "default"
         val DEFAULT_TRANSCRIPT_REMOVALS: List<String> = listOf("um", "uhm", "uh")
 
-        const val MODEL_PARAKEET_V2 = "parakeet_v2"
-        const val MODEL_PARAKEET_V3 = "parakeet_v3"
         const val MODEL_NEMOTRON_STREAMING = "nemotron_3_5_streaming"
-        private const val LEGACY_MODEL_PARAKEET_UNIFIED_STREAMING = "parakeet_unified_streaming"
+        const val MODEL_NEMOTRON_STREAMING_560MS = "nemotron_3_5_streaming_560ms"
+        const val MODEL_MLKIT_ADVANCED = "mlkit_genai_advanced"
     }
 
     var transcriptPolishingEnabled: Boolean
@@ -110,8 +119,9 @@ class AppPreferences(context: Context) {
 
     var selectedModelId: String
         get() {
-            val selected = prefs.getString(KEY_SELECTED_MODEL, MODEL_PARAKEET_V2) ?: MODEL_PARAKEET_V2
-            if (selected == LEGACY_MODEL_PARAKEET_UNIFIED_STREAMING) {
+            val selected = prefs.getString(KEY_SELECTED_MODEL, MODEL_NEMOTRON_STREAMING) ?: MODEL_NEMOTRON_STREAMING
+            if (selected != MODEL_NEMOTRON_STREAMING && selected != MODEL_NEMOTRON_STREAMING_560MS &&
+                selected != MODEL_MLKIT_ADVANCED) {
                 prefs.edit().putString(KEY_SELECTED_MODEL, MODEL_NEMOTRON_STREAMING).apply()
                 return MODEL_NEMOTRON_STREAMING
             }
@@ -119,15 +129,21 @@ class AppPreferences(context: Context) {
         }
         set(value) = prefs.edit().putString(KEY_SELECTED_MODEL, value).apply()
 
-    /** Recognizer threads for subsequent recognition sessions; VAD has its own thread. */
+    /** Preview is opt-in and takes effect at the start of the next recording. */
+    var streamingPreviewEnabled: Boolean
+        get() = prefs.getBoolean(KEY_STREAMING_PREVIEW, false)
+        set(value) = prefs.edit().putBoolean(KEY_STREAMING_PREVIEW, value).apply()
+
+    /** Explicit ML Kit locale; no automatic language detection is assumed. */
+    var mlKitLocaleTag: String
+        get() = prefs.getString(KEY_MLKIT_LOCALE, "en-US") ?: "en-US"
+        set(value) = prefs.edit().putString(KEY_MLKIT_LOCALE, value).apply()
+
+    /** Recognizer threads for subsequent recognition sessions. */
     var asrThreadCount: Int
         get() = prefs.getInt(KEY_ASR_THREAD_COUNT, 2).coerceIn(2, 4)
         set(value) = prefs.edit().putInt(KEY_ASR_THREAD_COUNT, value.coerceIn(2, 4)).apply()
 
-    /** Experimental feature dither for new TDT recognition sessions. */
-    var alwaysTdtDitherEnabled: Boolean
-        get() = prefs.getBoolean(KEY_ALWAYS_TDT_DITHER, false)
-        set(value) = prefs.edit().putBoolean(KEY_ALWAYS_TDT_DITHER, value).apply()
 
     /** Null means Android's automatic input routing. The key contains no raw device address. */
     val preferredMicrophone: String?
@@ -140,15 +156,6 @@ class AppPreferences(context: Context) {
         return editor.commit()
     }
 
-    /** Applies to new live Parakeet TDT captures only; visual speech detection is independent. */
-    var liveTdtVadChunkingEnabled: Boolean
-        get() = prefs.getBoolean(KEY_LIVE_TDT_VAD_CHUNKING, true)
-        set(value) = prefs.edit().putBoolean(KEY_LIVE_TDT_VAD_CHUNKING, value).apply()
-
-    /** Opt-in for new live TDT captures while VAD chunking is enabled. */
-    var liveTdtRemoveSilenceEnabled: Boolean
-        get() = prefs.getBoolean(KEY_LIVE_TDT_REMOVE_SILENCE, false)
-        set(value) = prefs.edit().putBoolean(KEY_LIVE_TDT_REMOVE_SILENCE, value).apply()
 
     var historyLimit: Int
         get() = prefs.getInt(KEY_HISTORY_LIMIT, 10)
@@ -240,6 +247,11 @@ class AppPreferences(context: Context) {
         get() = (prefs.getString(KEY_TRANSCRIPT_REMOVAL_WORDS, null)
             ?: DEFAULT_TRANSCRIPT_REMOVALS.joinToString("\n")).lines().filter { it.isNotBlank() }
         set(value) = prefs.edit().putString(KEY_TRANSCRIPT_REMOVAL_WORDS, value.joinToString("\n")).apply()
+
+    /** Existing replacement rules continue to apply after upgrading unless explicitly disabled. */
+    var stringReplacementEnabled: Boolean
+        get() = prefs.getBoolean(KEY_STRING_REPLACEMENT_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_STRING_REPLACEMENT_ENABLED, value).apply()
 
     fun getStringReplacementRules(): List<StringReplacementRule> {
         val serialized = prefs.getString(KEY_STRING_REPLACEMENT_RULES, null) ?: return emptyList()

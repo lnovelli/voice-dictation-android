@@ -8,7 +8,6 @@ import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
 import com.ludo.voicedictation.R
-import com.ludo.voicedictation.asr.HistoryVadMode
 import com.ludo.voicedictation.data.HistoryItem
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -19,8 +18,7 @@ internal class HistoryAdapter(
     private val onCopyClicked: (HistoryItem) -> Unit,
     private val onDeleteClicked: (HistoryItem) -> Unit,
     private val onPlayAudioClicked: (HistoryItem) -> Unit,
-    private val onReprocessAudioClicked: (HistoryItem, HistoryVadMode?) -> Unit,
-    private val onCopyDiagnosticsClicked: (String) -> Unit,
+    private val onReprocessAudioClicked: (HistoryItem) -> Unit,
     private val hasAudio: (HistoryItem) -> Boolean
 ) : RecyclerView.Adapter<HistoryAdapter.ViewHolder>() {
 
@@ -28,10 +26,6 @@ internal class HistoryAdapter(
     private var playingItemId: String? = null
     private var reprocessingItemId: String? = null
     private var reprocessCancelling = false
-    private var reprocessVadMode: HistoryVadMode? = null
-    private var diagnosticsByItemId: Map<String, String> = emptyMap()
-    private val expandedDiagnosticsIds = mutableSetOf<String>()
-
     class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val tvTimestamp: TextView = view.findViewById(R.id.tvHistoryTimestamp)
         val tvText: TextView = view.findViewById(R.id.tvHistoryText)
@@ -39,13 +33,7 @@ internal class HistoryAdapter(
         val btnDelete: ImageButton = view.findViewById(R.id.btnDeleteHistory)
         val btnPlayAudio: MaterialButton = view.findViewById(R.id.btnPlayHistoryAudio)
         val btnReprocessAudio: MaterialButton = view.findViewById(R.id.btnReprocessHistoryAudio)
-        val btnReprocessVad: MaterialButton = view.findViewById(R.id.btnReprocessHistoryAudioVad)
-        val btnReprocessVadRemoveSilence: MaterialButton = view.findViewById(R.id.btnReprocessHistoryAudioVadRemoveSilence)
         val tvReprocessStatus: TextView = view.findViewById(R.id.tvHistoryReprocessStatus)
-        val diagnosticsSection: View = view.findViewById(R.id.historyVadDiagnosticsSection)
-        val tvDiagnostics: TextView = view.findViewById(R.id.tvHistoryVadDiagnostics)
-        val btnCopyDiagnostics: MaterialButton = view.findViewById(R.id.btnCopyHistoryVadDiagnostics)
-        val btnToggleDiagnostics: MaterialButton = view.findViewById(R.id.btnToggleHistoryVadDiagnostics)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -70,8 +58,8 @@ internal class HistoryAdapter(
         }
         holder.btnPlayAudio.setOnClickListener { if (available && reprocessingItemId == null) onPlayAudioClicked(item) }
 
-        fun bindReprocessButton(button: MaterialButton, mode: HistoryVadMode?, label: Int) {
-            val active = reprocessing && reprocessVadMode == mode
+        fun bindReprocessButton(button: MaterialButton, label: Int) {
+            val active = reprocessing
             button.isEnabled = if (active) !reprocessCancelling else available && reprocessingItemId == null
             button.text = holder.itemView.context.getString(when {
                 active && reprocessCancelling -> R.string.history_audio_reprocessing
@@ -87,53 +75,25 @@ internal class HistoryAdapter(
             } else null
             button.setOnClickListener {
                 if ((active && !reprocessCancelling) || (available && reprocessingItemId == null)) {
-                    onReprocessAudioClicked(item, mode)
+                    onReprocessAudioClicked(item)
                 }
             }
         }
-        bindReprocessButton(holder.btnReprocessAudio, null, R.string.history_audio_reprocess)
-        bindReprocessButton(holder.btnReprocessVad, HistoryVadMode.STANDARD, R.string.history_audio_reprocess_vad)
-        bindReprocessButton(holder.btnReprocessVadRemoveSilence, HistoryVadMode.REMOVE_SILENCE, R.string.history_audio_reprocess_vad_remove_silence)
-
+        bindReprocessButton(holder.btnReprocessAudio, R.string.history_audio_reprocess)
         holder.tvReprocessStatus.visibility = if (reprocessing) View.VISIBLE else View.GONE
         if (reprocessing) {
-            val label = when (reprocessVadMode) {
-                null -> R.string.history_audio_reprocess
-                HistoryVadMode.STANDARD -> R.string.history_audio_reprocess_vad
-                HistoryVadMode.REMOVE_SILENCE -> R.string.history_audio_reprocess_vad_remove_silence
-            }
             holder.tvReprocessStatus.text = holder.itemView.context.getString(
                 if (reprocessCancelling) R.string.history_audio_reprocess_cancelling_accessibility
                 else R.string.history_audio_reprocess_progress_variant,
-                holder.itemView.context.getString(label)
+                holder.itemView.context.getString(R.string.history_audio_reprocess)
             )
-        }
-        val diagnostics = diagnosticsByItemId[item.id]
-        val expanded = diagnostics != null && item.id in expandedDiagnosticsIds
-        holder.diagnosticsSection.visibility = if (diagnostics != null) View.VISIBLE else View.GONE
-        holder.tvDiagnostics.visibility = if (expanded) View.VISIBLE else View.GONE
-        holder.tvDiagnostics.text = if (expanded) diagnostics else ""
-        holder.btnCopyDiagnostics.setOnClickListener {
-            diagnosticsByItemId[item.id]?.let(onCopyDiagnosticsClicked)
-        }
-        holder.btnToggleDiagnostics.setText(
-            if (expanded) R.string.history_vad_diagnostics_hide else R.string.history_vad_diagnostics_show
-        )
-        holder.btnToggleDiagnostics.setOnClickListener {
-            if (diagnosticsByItemId[item.id] != null) {
-                if (!expandedDiagnosticsIds.add(item.id)) expandedDiagnosticsIds.remove(item.id)
-                val currentPosition = holder.bindingAdapterPosition
-                if (currentPosition != RecyclerView.NO_POSITION) notifyItemChanged(currentPosition)
-            }
         }
     }
 
     override fun getItemCount(): Int = items.size
 
-    fun updateItems(newItems: List<HistoryItem>, diagnostics: Map<String, String>) {
+    fun updateItems(newItems: List<HistoryItem>) {
         items = newItems
-        diagnosticsByItemId = diagnostics.toMap()
-        expandedDiagnosticsIds.retainAll(diagnosticsByItemId.keys)
         notifyDataSetChanged()
     }
 
@@ -143,11 +103,10 @@ internal class HistoryAdapter(
         notifyDataSetChanged()
     }
 
-    fun setReprocessingItemId(id: String?, cancelling: Boolean = false, mode: HistoryVadMode? = null) {
-        if (reprocessingItemId == id && reprocessCancelling == cancelling && reprocessVadMode == mode) return
+    fun setReprocessingItemId(id: String?, cancelling: Boolean = false) {
+        if (reprocessingItemId == id && reprocessCancelling == cancelling) return
         reprocessingItemId = id
         reprocessCancelling = cancelling
-        reprocessVadMode = mode
         notifyDataSetChanged()
     }
 }
