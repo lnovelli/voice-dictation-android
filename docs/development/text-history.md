@@ -1,6 +1,6 @@
 # Final text, History and polishing
 
-Settings can be exported to and imported from a user-selected JSON document. The file is unencrypted and may contain private vocabulary, endpoints and prompts. Import replaces settings after validation and leaves History, recordings, model files and system permissions untouched; restarting the activity prevents stale UI state from overwriting restored values.
+Settings can be exported to and imported from a user-selected JSON document. The file is unencrypted and may contain private vocabulary, endpoints and prompts. Validate the entire import before writing; separate preference-store commits are not one atomic transaction, so disclose partial-restore failures rather than claiming the original settings are intact. Import leaves History, recordings, model files and system permissions untouched; restarting the activity prevents stale UI state from overwriting restored values.
 
 Android Auto Backup includes app preferences (including transcript history) when enabled by the device; it excludes downloaded models to avoid the cloud quota and excludes History audio via no-backup storage. Android 12+ direct device transfer remains unrestricted apart from no-backup storage. Older Android applies the model exclusion to both modes. Actual cloud backup and restore depend on the device and transport, not just the manifest.
 

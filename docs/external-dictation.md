@@ -73,6 +73,8 @@ to the **same callback Messenger** for the session and put these values in `data
 | `2` | STOP | Stops capture (or releases cap-wait), drains queued TDT ranges in order, joins the transcript and finalizes once. Nemotron streaming flushes its existing online stream. v1.2.3 instead loads TDT and performs one full-recording decode. |
 | `3` | CANCEL | Stops capture and discards all pending transcription; no acknowledgement or final result. |
 | `4` | CMD_TRANSCRIBE_FILE | Claims exclusive ownership and transcribes a completed PCM file asynchronously; no START or STOP is needed. |
+| `5` | START_REMOTE_PCM | Claims exclusive ownership of a raw PCM pipe and starts the selected Nemotron online decoder; no phone microphone. |
+| `6` | FINISH_REMOTE_PCM | Explicitly finishes the same owned pipe session with a verified byte count and SHA-256. |
 
 START and CMD_TRANSCRIBE_FILE reject busy sessions, including each other and
 ordinary floating dictation; they never preempt them. STOP and CANCEL must match the original sending UID, exact
@@ -137,6 +139,43 @@ is a safe no-op: it does not abort loading or finalization. CANCEL still require
 the original UID, session ID and callback Binder and suppresses all later output.
 Use a fresh UUID and command 4 for each new file; do not precede it with START.
 
+### Remote streaming PCM (watch → Hermes phone → Voice Dictation)
+
+Use the same protocol 1 envelope, canonical UUID, callback Messenger, authenticated
+UID and explicit binding. Command **5** carries `audio_fd` as a readable pipe
+`ParcelFileDescriptor`, `sample_rate` as Int `16000`, `channels` as Int `1`, and
+`encoding` as String `pcm_s16le`. The sender closes its transferred read descriptor;
+the provider owns its duplicate and reads ordered raw PCM off Main. Command 4 still
+accepts only a completed regular file and rejects a pipe. Command 5 requires the
+selected, downloaded Nemotron model; ML Kit is not a streaming alternative. It needs
+neither microphone permission nor donated microphone capability. Busy and other
+admission failures return ERROR. `STATE` `recording` indicates that the pipe has been
+accepted and is ready to read; it does not mean the phone microphone was opened.
+
+The sender writes at most **9,600,000 bytes** (five minutes) and must preserve every
+sample, including the last short block. Only after explicit user Stop and the client's
+own complete-stream verification, close the pipe writer and send command **6** with
+the same owner/envelope and `byte_count` as Long (even, 2 through 9,600,000) and
+`sha256` as exactly 64 lowercase hexadecimal characters over the raw PCM bytes.
+While the pipe is still streaming, the Nemotron decoder may emit `PARTIAL` (102)
+to the authenticated owner's callback. Each `text` replaces the previous full
+unvalidated hypothesis, including an empty string when the hypothesis clears. Checks
+are throttled to at most one per 250 ms, pending callbacks are coalesced, and full
+hypotheses over 4096 UTF-16 code units are omitted rather than truncated. Previews
+are not final, transformed, logged or saved to History. They can differ from or
+disappear before the final result; clients must not submit them. Events cease on
+FINISH, EOF, input failure or cancellation, and queued events are session-guarded.
+Local live and completed-file IPC still emit no partials.
+
+FINISH and observed EOF may race. The provider waits for both, independently checks
+length and digest, and only then flushes the existing online decoder and publishes
+final text/History. EOF alone is not consent. Missing FINISH waits for cancellation or
+the fifteen-minute session timeout; missing EOF also times out. Mismatch, invalid or
+duplicate FINISH, oversized/odd/empty PCM, cancellation, death and unbind cannot
+produce a result. CANCEL=3 uses the same UID, exact session and callback Binder;
+STOP=2 is not a substitute for FINISH. A valid FINISH may emit `processing` before
+EOF while it waits for the remaining pipe data.
+
 ## Events
 
 All events are `Message`s sent to `replyTo`, with `data.session_id` (String) and
@@ -149,7 +188,7 @@ changing either side.
 | `Message.what` | Name | Additional Bundle key | Meaning |
 | --- | --- | --- | --- |
 | `101` | STATE | `state`: String | `starting`, `recording`, `recording_limit`, `loading`, or `processing` |
-| `102` | PARTIAL | `text`: String | Reserved for protocol compatibility; **never emitted** in 1.0.8. |
+| `102` | PARTIAL | `text`: String | Replaceable, unvalidated full-text preview during remote PCM command 5 only; not a result. |
 | `103` | RESULT | `text`: String | Nonempty final transcript after final decode and complete engine cleanup. |
 | `104` | ERROR | `error`: String | Human-readable failure, validation error, busy rejection, or timeout. |
 

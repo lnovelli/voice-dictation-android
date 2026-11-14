@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.2.46 (build 67; ARM64-only)
+## Current release: v1.2.48 (build 69; ARM64-only)
 
-Adds JSON settings import/export and Android Auto Backup rules, reorganizes Polish and Vocabulary settings, and improves spoken-decimal conversion. Nemotron offers 560 ms and 1,120 ms model choices and optional live preview; ML Kit Advanced is optional on supported devices. Parakeet models are no longer supported. Device behavior and recognition accuracy depend on the app and device; backup and restore depend on Android's transport.
+Adds owner-bound remote PCM streaming for compatible clients, with Nemotron interim previews and final byte-count and SHA-256 validation. This release has not been tested on a device. Device behavior and recognition accuracy depend on the app and device; backup and restore depend on Android's transport.
 
 Settings JSON is unencrypted and may contain private vocabulary, endpoints and prompts. It excludes transcript history, audio, downloaded models and system permissions. Android cloud backup may include settings and transcript history, but excludes models and saved audio.
 

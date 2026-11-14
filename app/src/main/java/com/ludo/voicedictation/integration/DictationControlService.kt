@@ -26,8 +26,10 @@ class DictationControlService : Service() {
         const val STOP = 2
         const val CANCEL = 3
         const val CMD_TRANSCRIBE_FILE = 4
+        const val START_REMOTE_PCM = 5
+        const val FINISH_REMOTE_PCM = 6
         const val STATE = 101
-        const val PARTIAL = 102 // Reserved for protocol compatibility; never emitted.
+        const val PARTIAL = 102 // Unvalidated preview for the owned remote PCM stream only.
         const val RESULT = 103
         const val ERROR = 104
         const val CONTROL_PERMISSION = "com.ludo.voicedictation.permission.CONTROL_DICTATION"
@@ -37,13 +39,14 @@ class DictationControlService : Service() {
         private const val TAG = "DictationControl"
     }
 
-    private class Owner(val uid: Int, val id: String, val callback: Messenger) {
+    private class Owner(val uid: Int, val id: String, val callback: Messenger, val remotePcm: Boolean) {
         val token = Any()
         lateinit var death: IBinder.DeathRecipient
         lateinit var timeout: Runnable
         var cancelled = false
         var linked = false
         var limitCuePlayed = false
+        var finishReceived = false
     }
 
     private val engine by lazy { SpeechEngine.getInstance(this) }
@@ -109,21 +112,38 @@ class DictationControlService : Service() {
             }
             when (message.what) {
                 START -> start(message.sendingUid, id, callback)
-                CMD_TRANSCRIBE_FILE -> {
+                CMD_TRANSCRIBE_FILE, START_REMOTE_PCM -> {
                     if (audioFile == null || data.get("sample_rate") != 16000 ||
                         data.get("channels") != 1 || data.get("encoding") != "pcm_s16le") {
                         send(callback, id, ERROR, "error",
                             "Expected audio_fd, sample_rate 16000, channels 1 and encoding pcm_s16le.")
                         return
                     }
-                    transferred = start(message.sendingUid, id, callback, audioFile)
+                    transferred = start(message.sendingUid, id, callback, audioFile, message.what == START_REMOTE_PCM)
                 }
-                STOP, CANCEL -> {
+                STOP, CANCEL, FINISH_REMOTE_PCM -> {
                     val current = owner
                     if (current == null || current.cancelled || current.uid != message.sendingUid ||
                         current.id != id || current.callback.binder != callback.binder) {
                         send(callback, id, ERROR, "error", "No matching owned dictation session.")
+                    } else if (message.what == FINISH_REMOTE_PCM) {
+                        val count = data.get("byte_count") as? Long
+                        val hash = data.get("sha256") as? String
+                        if (!current.remotePcm || current.finishReceived || count == null ||
+                            count < 2L || count > 9_600_000L || count % 2L != 0L ||
+                            hash == null || !hash.matches(Regex("[0-9a-f]{64}"))) {
+                            send(callback, id, ERROR, "error", "Invalid or duplicate remote PCM finish.")
+                            if (current.remotePcm) abort(current)
+                        } else {
+                            current.finishReceived = true
+                            engine.finishExternalPcm(current.token, count, hash)
+                        }
                     } else if (message.what == STOP) {
+                        if (current.remotePcm) {
+                            send(callback, id, ERROR, "error", "Use FINISH_REMOTE_PCM for remote audio.")
+                            abort(current)
+                            return
+                        }
                         engine.stopExternal(current.token)
                     } else {
                         // CANCEL discards all output; no RESULT or acknowledgement is emitted.
@@ -141,10 +161,12 @@ class DictationControlService : Service() {
     }
 
     /** Returns true only when the engine takes ownership of audioFile (if supplied). */
-    private fun start(uid: Int, id: String, callback: Messenger, audioFile: ParcelFileDescriptor? = null): Boolean {
+    private fun start(uid: Int, id: String, callback: Messenger, audioFile: ParcelFileDescriptor? = null, remotePcm: Boolean = false): Boolean {
         val error = when {
             owner != null || engine.isBusy -> "Dictation is busy."
             !prefs.serviceEnabled -> "Enable dictation service in Voice Dictation Settings."
+            remotePcm && prefs.selectedModelId == AppPreferences.MODEL_MLKIT_ADVANCED ->
+                "Remote PCM streaming requires a ready Nemotron model; ML Kit is not supported."
             audioFile == null && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ->
                 "Grant microphone permission to Voice Dictation."
             prefs.selectedModelId != AppPreferences.MODEL_MLKIT_ADVANCED && !engine.isModelReady() ->
@@ -155,7 +177,7 @@ class DictationControlService : Service() {
             send(callback, id, ERROR, "error", error)
             return false
         }
-        val current = Owner(uid, id, callback)
+        val current = Owner(uid, id, callback, remotePcm)
         current.death = IBinder.DeathRecipient { handler.post { abort(current) } }
         current.timeout = Runnable {
             if (owner === current && !current.cancelled) {
@@ -179,6 +201,13 @@ class DictationControlService : Service() {
                 }
                 emit(current, STATE, "state", state)
             }
+            override fun onPartial(text: String) {
+                if (owner !== current || current.cancelled || !bound || destroyed ||
+                    !current.remotePcm || current.finishReceived) return
+                // Recheck the admitted principal at the actual preview delivery boundary.
+                if (!trusted(current.uid) || !current.callback.binder.isBinderAlive) abort(current)
+                else emit(current, PARTIAL, "text", text)
+            }
             override fun onFinished(text: String?, error: String?) {
                 if (owner !== current) return
                 // Engine ownership and all async decode/capture work have already finished.
@@ -192,8 +221,11 @@ class DictationControlService : Service() {
                 }
             }
         }
-        val started = if (audioFile == null) engine.startExternal(current.token, listener)
-            else engine.startExternalFile(current.token, listener, audioFile)
+        val started = when {
+            remotePcm -> engine.startExternalPcm(current.token, listener, checkNotNull(audioFile))
+            audioFile == null -> engine.startExternal(current.token, listener)
+            else -> engine.startExternalFile(current.token, listener, audioFile)
+        }
         if (!started) {
             clear(current)
             owner = null

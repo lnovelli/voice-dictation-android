@@ -4,6 +4,8 @@
 
 Inspect `ModelInfo`, `ModelManager`, preferences, Settings, readiness/delete and all live, file and History dispatch paths together. Initialize before capture or buffer all audio while loading. Check the exact release asset name, size, contents and digest against the authoritative release listing; validate user-supplied names literally, never silently repair them.
 
+For an ASR regression, compare old and current code and uncommitted changes, model URL/checksum, runtime, persisted decoding options, audio preprocessing and final text rules. A reused preference may start affecting a model it previously bypassed. When authorized, compare the same recording and settings; distinguish code inspection from measured device behavior.
+
 `ModelManager` stages downloads in unique app-private directories and verifies a SHA-256 when specified by the catalog. Admit exactly the four expected filenames under the model root, ignore other entries without resolving their paths, and reject duplicates, missing entries, malformed headers and non-regular file types. Commons Compress `isFile()` is insufficient: require `TarConstants.LF_NORMAL` or `LF_OLDNORM` explicitly. Verify staged files before install; preserve existing model directories including partial ones, restore on failed swap where possible, and clean staging on failure/cancellation. Do not silently delete older user models as a selection migration. Model storage is under app-private `filesDir/models`; do not assume ordinary file managers can access it.
 
 ## Streaming and vocabulary

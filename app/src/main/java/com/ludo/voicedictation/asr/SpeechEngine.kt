@@ -13,6 +13,8 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.system.Os
 import android.system.OsConstants
+import android.system.ErrnoException
+import android.system.StructPollfd
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
@@ -27,6 +29,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
+import java.security.MessageDigest
 import java.util.Locale
 
 class SpeechEngine private constructor(private val context: Context) {
@@ -34,6 +37,9 @@ class SpeechEngine private constructor(private val context: Context) {
         private const val TAG = "SpeechEngine"
         private const val SAMPLE_RATE = RecordingLimits.SAMPLE_RATE
         private const val MAX_FILE_BYTES = 3_840_000L // Completed-file IPC input is limited to 120 seconds.
+        private const val MAX_REMOTE_PCM_BYTES = 9_600_000L // Five minutes of PCM16.
+        // Never truncate an interim hypothesis: omit it if it cannot fit this IPC bound.
+        private const val MAX_REMOTE_PREVIEW_CHARS = 4096
         private const val CAPTURE_READ_SAMPLES = 1024
         // Batch PCM into 200 ms queue items; size the queue for the full bounded capture.
         private const val STREAM_CHUNK_SAMPLES = SAMPLE_RATE / 5
@@ -53,6 +59,8 @@ class SpeechEngine private constructor(private val context: Context) {
     /** All control methods and listener callbacks run on the main thread. */
     interface ExternalListener {
         fun onState(state: String)
+        /** Unvalidated, replaceable full-text hypothesis for a remote PCM stream only. */
+        fun onPartial(text: String) {}
         // Called only after capture, final decode, native-lock and coroutine cleanup finish.
         // Both values are null when cancelled. Empty speech is reported as an error.
         fun onFinished(text: String?, error: String?)
@@ -62,6 +70,7 @@ class SpeechEngine private constructor(private val context: Context) {
         val owner: Any? = null,
         val listener: ExternalListener? = null,
         val audioFile: ParcelFileDescriptor? = null,
+        val remotePcm: Boolean = false,
         val historyAudioInputFileName: String? = null,
         val historyReprocessOwner: Any? = null,
         val historyPolishingConfiguration: TranscriptPolishingConfiguration? = null
@@ -74,6 +83,12 @@ class SpeechEngine private constructor(private val context: Context) {
         var publishedPreview = ""
         @Volatile var advancedJob: Job? = null
         val stopRequested = CompletableDeferred<Unit>()
+        val remoteFinish = CompletableDeferred<RemoteFinish?>()
+        @Volatile var remoteValidated = false
+        @Volatile var remoteInputEnded = false
+        val remotePreviewLock = Any()
+        var pendingRemotePreview: String? = null // protected by remotePreviewLock
+        var remotePreviewPosted = false // protected by remotePreviewLock
         @Volatile var stopped = false
         @Volatile var cancelled = false
         var text: String? = null
@@ -88,6 +103,8 @@ class SpeechEngine private constructor(private val context: Context) {
 
         @Synchronized fun closeAudioFile() { runCatching { audioFile?.close() } }
     }
+
+    private data class RemoteFinish(val byteCount: Long, val sha256: String)
 
     private data class DecoderConfig(
         val model: ModelInfo,
@@ -156,6 +173,10 @@ class SpeechEngine private constructor(private val context: Context) {
     fun startExternalFile(owner: Any, listener: ExternalListener, audioFile: ParcelFileDescriptor): Boolean =
         startSession(Session(owner, listener, audioFile))
 
+    /** The pipe is owned by this session on success; it never opens the microphone. */
+    fun startExternalPcm(owner: Any, listener: ExternalListener, audioFile: ParcelFileDescriptor): Boolean =
+        startSession(Session(owner, listener, audioFile, remotePcm = true))
+
     /** User-requested retry; results never reach overlay insertion or clipboard. */
     internal fun startHistoryReprocess(
         owner: Any,
@@ -185,10 +206,10 @@ class SpeechEngine private constructor(private val context: Context) {
     private fun startSession(current: Session): Boolean {
         check(Looper.myLooper() == Looper.getMainLooper())
         if (!prefs.serviceEnabled || isBusy) return false
-        val hasCompletedAudio = current.audioFile != null || current.historyAudioInputFileName != null
+        val hasCompletedAudio = (current.audioFile != null && !current.remotePcm) || current.historyAudioInputFileName != null
         if (current.historyAudioInputFileName != null &&
             HistoryAudioStore.find(context, current.historyAudioInputFileName) == null) return false
-        if (!hasCompletedAudio &&
+        if (!hasCompletedAudio && !current.remotePcm &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             if (current.listener == null) onError?.invoke("Grant microphone permission in Settings before dictating.")
             return false
@@ -198,6 +219,7 @@ class SpeechEngine private constructor(private val context: Context) {
             .filter { it.length in 1..80 && HOTWORD_PATTERN.matches(it) }
             .distinct().sorted().toList() else emptyList()
         val selectedModelId = prefs.selectedModelId
+        if (current.remotePcm && selectedModelId == AppPreferences.MODEL_MLKIT_ADVANCED) return false
         current.advancedLocale = if (selectedModelId == AppPreferences.MODEL_MLKIT_ADVANCED)
             Locale.forLanguageTag(prefs.mlKitLocaleTag) else null
         if (current.advancedLocale != null) {
@@ -624,19 +646,23 @@ class SpeechEngine private constructor(private val context: Context) {
                                         engine.decode(stream)
                                     }
                                     val now = SystemClock.elapsedRealtime()
-                                    if (current.previewEnabled && !current.stopped && !current.cancelled &&
+                                    val remotePreviewActive = current.remotePcm && !current.remoteInputEnded
+                                    if ((current.previewEnabled || remotePreviewActive) && !current.stopped && !current.cancelled &&
                                         prefs.serviceEnabled && now - lastPreviewCheck >= 250L) {
                                         lastPreviewCheck = now
                                         // A preview failure must not replace the existing final decode.
                                         val preview = try { engine.getResult(stream).text.trim() }
                                             catch (_: Exception) { null }
-                                        if (preview != null && preview != lastPreview) {
+                                        if (preview != null && preview != lastPreview &&
+                                            (!current.remotePcm || preview.length <= MAX_REMOTE_PREVIEW_CHARS)) {
                                             lastPreview = preview
-                                            postPreview(current, preview)
+                                            if (current.remotePcm) postRemotePreview(current, preview)
+                                            else postPreview(current, preview)
                                         }
                                     }
                                 }
-                                if (receivedAudio && !current.cancelled && prefs.serviceEnabled) {
+                                if (receivedAudio && !current.cancelled && prefs.serviceEnabled &&
+                                    (!current.remotePcm || current.remoteValidated)) {
                                     finalText = finishOnlineStream(engine, stream, current)
                                 }
                             } catch (e: CancellationException) {
@@ -650,9 +676,11 @@ class SpeechEngine private constructor(private val context: Context) {
 
                         val samples = try {
                             withContext(Dispatchers.IO) {
-                                captureRecording(current, onStreamingChunk = { chunk ->
+                                val sendChunk: suspend (ShortArray) -> Unit = { chunk ->
                                     if (!current.cancelled) chunks.send(chunk)
-                                })
+                                }
+                                if (current.remotePcm) readRemotePcm(current, sendChunk)
+                                else captureRecording(current, sendChunk)
                             }
                         } finally {
                             chunks.close()
@@ -666,6 +694,74 @@ class SpeechEngine private constructor(private val context: Context) {
                 }
             }
         }
+
+    /** Read a pipe without allowing an unresponsive writer to trap cancellation in read(). */
+    private suspend fun readRemotePcm(current: Session, onStreamingChunk: suspend (ShortArray) -> Unit): FloatArray {
+        val file = checkNotNull(current.audioFile)
+        val fd = file.fileDescriptor
+        require(OsConstants.S_ISFIFO(Os.fstat(fd).st_mode)) { "audio_fd must be a readable pipe." }
+        val flags = Os.fcntlInt(fd, OsConstants.F_GETFL, 0)
+        require((flags and OsConstants.O_ACCMODE) == OsConstants.O_RDONLY) { "audio_fd must be a readable pipe." }
+        Os.fcntlInt(fd, OsConstants.F_SETFL, flags or OsConstants.O_NONBLOCK)
+        withContext(Dispatchers.Main.immediate) {
+            if (session === current && !current.cancelled && !current.stopped) setState(true, false, "recording")
+        }
+        val recording = ShortArray((MAX_REMOTE_PCM_BYTES / 2).toInt())
+        val buffer = ByteArray(8192)
+        val digest = MessageDigest.getInstance("SHA-256")
+        var byteCount = 0L
+        var sampleCount = 0
+        var lowByte = -1
+        var chunk = ShortArray(STREAM_CHUNK_SAMPLES)
+        var chunkCount = 0
+        val poll = StructPollfd().apply { this.fd = fd; events = OsConstants.POLLIN.toShort() }
+        try {
+            while (!current.cancelled && prefs.serviceEnabled) {
+                val ready = Os.poll(arrayOf(poll), 200)
+                if (ready == 0) continue
+                val count = try { Os.read(fd, buffer, 0, buffer.size) } catch (e: ErrnoException) {
+                    if (e.errno == OsConstants.EAGAIN || e.errno == OsConstants.EINTR) continue
+                    throw e
+                }
+                if (count == 0) break
+                byteCount += count
+                require(byteCount <= MAX_REMOTE_PCM_BYTES) { "Remote PCM exceeds the five-minute limit." }
+                digest.update(buffer, 0, count)
+                for (i in 0 until count) {
+                    val value = buffer[i].toInt() and 0xff
+                    if (lowByte < 0) lowByte = value else {
+                        val sample = ((value shl 8) or lowByte).toShort()
+                        lowByte = -1
+                        recording[sampleCount++] = sample
+                        chunk[chunkCount++] = sample
+                        if (chunkCount == chunk.size) {
+                            onStreamingChunk(chunk)
+                            chunk = ShortArray(STREAM_CHUNK_SAMPLES)
+                            chunkCount = 0
+                        }
+                    }
+                }
+            }
+        } finally {
+            // Stop queued previews at EOF or any input failure, independently of FINISH.
+            synchronized(current.remotePreviewLock) {
+                current.remoteInputEnded = true
+                current.pendingRemotePreview = null
+            }
+        }
+        current.closeAudioFile()
+        if (current.cancelled || !prefs.serviceEnabled) return floatArrayOf()
+        // EOF can race FINISH. EOF is never itself permission to flush or publish.
+        val finish = current.remoteFinish.await() ?: return floatArrayOf()
+        if (current.cancelled || !prefs.serviceEnabled) return floatArrayOf()
+        val hash = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        require(byteCount >= 2 && lowByte < 0 && byteCount == finish.byteCount && hash == finish.sha256) {
+            "Remote PCM count or SHA-256 did not match the complete stream."
+        }
+        current.remoteValidated = true
+        if (chunkCount > 0) onStreamingChunk(chunk.copyOf(chunkCount))
+        return FloatArray(sampleCount) { recording[it] / 32768f }
+    }
 
     /** Capture every PCM sample; the decoder queue receives independent PCM blocks. */
     @SuppressLint("MissingPermission")
@@ -860,10 +956,42 @@ class SpeechEngine private constructor(private val context: Context) {
         session?.takeIf { it.owner === owner }?.let { stopSession(it) }
     }
 
+    fun finishExternalPcm(owner: Any, byteCount: Long, sha256: String) {
+        session?.takeIf { it.owner === owner && it.remotePcm && !it.cancelled }?.let {
+            snapshotFinalizationSettings(it)
+            it.stopped = true
+            synchronized(it.remotePreviewLock) { it.pendingRemotePreview = null }
+            it.remoteFinish.complete(RemoteFinish(byteCount, sha256))
+            setState(false, true, "processing")
+        }
+    }
+
     fun cancelExternal(owner: Any) {
         session?.takeIf { it.owner === owner }?.let {
             it.cancelled = true
+            synchronized(it.remotePreviewLock) { it.pendingRemotePreview = null }
             stopSession(it)
+        }
+    }
+
+    /** Coalesce while Main is blocked; never queue unbounded private text in callbacks. */
+    private fun postRemotePreview(current: Session, text: String) {
+        synchronized(current.remotePreviewLock) {
+            if (current.stopped || current.cancelled || current.remoteInputEnded) return
+            current.pendingRemotePreview = text
+            if (current.remotePreviewPosted) return
+            current.remotePreviewPosted = true
+        }
+        mainHandler.post {
+            synchronized(current.remotePreviewLock) {
+                current.remotePreviewPosted = false
+                val pending = current.pendingRemotePreview
+                current.pendingRemotePreview = null
+                if (pending != null && session === current && current.remotePcm &&
+                    !current.stopped && !current.cancelled && !current.remoteInputEnded && prefs.serviceEnabled) {
+                    current.listener?.onPartial(pending)
+                }
+            }
         }
     }
 
@@ -887,6 +1015,7 @@ class SpeechEngine private constructor(private val context: Context) {
     private fun stopSession(current: Session) {
         if (current.cancelled) {
             current.closeAudioFile()
+            current.remoteFinish.complete(null)
             current.advancedJob?.cancel()
         }
         // Completed files already exist: STOP is a no-op; only CANCEL discards their result.
