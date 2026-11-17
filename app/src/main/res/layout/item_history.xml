@@ -15,14 +15,25 @@
         android:gravity="center_vertical"
         android:layout_marginBottom="6dp">
 
-        <TextView
-            android:id="@+id/tvHistoryTimestamp"
+        <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:textColor="@color/accent"
-            android:textSize="12sp"
-            android:textStyle="bold" />
+            android:orientation="vertical">
+            <TextView
+                android:id="@+id/tvHistoryTimestamp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+            <TextView
+                android:id="@+id/tvHistoryDuration"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
 
         <ImageButton
             android:id="@+id/btnCopyHistory"
@@ -57,12 +68,59 @@
         android:orientation="vertical"
         android:layout_marginTop="8dp">
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnPlayHistoryAudio"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/history_audio_play" />
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnPlayHistoryAudio"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.35"
+                android:minWidth="0dp"
+                android:paddingHorizontal="2dp"
+                android:textSize="12sp"
+                android:text="@string/history_audio_play" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnHistorySpeed1"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="0.85"
+                android:minWidth="0dp"
+                android:paddingHorizontal="2dp"
+                android:textSize="12sp"
+                android:text="@string/history_audio_speed_1"
+                android:visibility="gone" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnHistorySpeed15"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="0.85"
+                android:minWidth="0dp"
+                android:paddingHorizontal="2dp"
+                android:textSize="12sp"
+                android:text="@string/history_audio_speed_15"
+                android:visibility="gone" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnHistorySpeed2"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="0.85"
+                android:minWidth="0dp"
+                android:paddingHorizontal="2dp"
+                android:textSize="12sp"
+                android:text="@string/history_audio_speed_2"
+                android:visibility="gone" />
+        </LinearLayout>
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnReprocessHistoryAudio"

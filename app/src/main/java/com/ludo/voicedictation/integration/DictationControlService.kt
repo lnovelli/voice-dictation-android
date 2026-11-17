@@ -166,7 +166,7 @@ class DictationControlService : Service() {
             owner != null || engine.isBusy -> "Dictation is busy."
             !prefs.serviceEnabled -> "Enable dictation service in Voice Dictation Settings."
             remotePcm && prefs.selectedModelId == AppPreferences.MODEL_MLKIT_ADVANCED ->
-                "Remote PCM streaming requires a ready Nemotron model; ML Kit is not supported."
+                "Remote PCM streaming supports Nemotron and Fluid models; ML Kit is not supported."
             audioFile == null && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ->
                 "Grant microphone permission to Voice Dictation."
             prefs.selectedModelId != AppPreferences.MODEL_MLKIT_ADVANCED && !engine.isModelReady() ->

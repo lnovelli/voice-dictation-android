@@ -67,6 +67,7 @@ class SettingsFragment : Fragment() {
     private lateinit var speechEngine: SpeechEngine
 
     private var isDownloading = false
+    private var qnnDownloadJob: Job? = null
     private var mlkitStatus: Int? = null
     private var mlkitMessage = R.string.mlkit_checking
     private var mlkitProgress: String? = null
@@ -297,16 +298,16 @@ class SettingsFragment : Fragment() {
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
         }
         binding.modelVariants.check(when (prefs.selectedModelId) {
-            AppPreferences.MODEL_NEMOTRON_STREAMING_560MS -> R.id.model560ms
             AppPreferences.MODEL_FLUID_SPEECH_PRO -> R.id.modelFluidSpeechPro
+            AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN -> R.id.modelFluidSpeechProQnn
             AppPreferences.MODEL_MLKIT_ADVANCED -> R.id.modelMlkitAdvanced
             else -> R.id.model1120ms
         })
         binding.modelVariants.setOnCheckedChangeListener { _, checkedId ->
             val selected = when (checkedId) {
-                R.id.model560ms -> AppPreferences.MODEL_NEMOTRON_STREAMING_560MS
                 R.id.model1120ms -> AppPreferences.MODEL_NEMOTRON_STREAMING
                 R.id.modelFluidSpeechPro -> AppPreferences.MODEL_FLUID_SPEECH_PRO
+                R.id.modelFluidSpeechProQnn -> AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN
                 R.id.modelMlkitAdvanced -> AppPreferences.MODEL_MLKIT_ADVANCED
                 else -> return@setOnCheckedChangeListener
             }
@@ -314,8 +315,15 @@ class SettingsFragment : Fragment() {
             updateModelStatus()
         }
         binding.btnDownloadModel.setOnClickListener {
-            if (prefs.selectedModelId == AppPreferences.MODEL_MLKIT_ADVANCED) startMlkitDownload()
-            else startModelDownload()
+            when (prefs.selectedModelId) {
+                AppPreferences.MODEL_MLKIT_ADVANCED -> startMlkitDownload()
+                AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN -> startQnnDownload()
+                else -> startModelDownload()
+            }
+        }
+        binding.btnCancelModelDownload.setOnClickListener {
+            binding.btnCancelModelDownload.isEnabled = false
+            qnnDownloadJob?.cancel()
         }
         binding.btnCheckMlkit.setOnClickListener { checkMlkitStatus() }
         setupMlkitDiagnostics()
@@ -401,11 +409,20 @@ class SettingsFragment : Fragment() {
         binding.switchStreamingPreview.isEnabled = supportsPreview
         binding.tvStreamingPreviewError.visibility = if (supportsPreview) View.GONE else View.VISIBLE
         val isMlkit = prefs.selectedModelId == AppPreferences.MODEL_MLKIT_ADVANCED
-        val isNemotron = prefs.selectedModelId == AppPreferences.MODEL_NEMOTRON_STREAMING ||
-            prefs.selectedModelId == AppPreferences.MODEL_NEMOTRON_STREAMING_560MS
+        val isNemotron = prefs.selectedModelId == AppPreferences.MODEL_NEMOTRON_STREAMING
+        val isFluid = prefs.selectedModelId == AppPreferences.MODEL_FLUID_SPEECH_PRO
+        val isQnn = prefs.selectedModelId == AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN
+        binding.tvNemotronDescription.visibility = if (isNemotron) View.VISIBLE else View.GONE
+        binding.layoutFluidSettings.visibility = if (isFluid) View.VISIBLE else View.GONE
+        binding.tvFluidQnnDescription.visibility = if (isQnn) View.VISIBLE else View.GONE
+        binding.layoutMlkitSettings.visibility = if (isMlkit) View.VISIBLE else View.GONE
         binding.tvNemotronLanguageLabel.visibility = if (isNemotron) View.VISIBLE else View.GONE
         binding.spinnerNemotronLanguage.visibility = if (isNemotron) View.VISIBLE else View.GONE
         binding.tvNemotronLanguageHint.visibility = if (isNemotron) View.VISIBLE else View.GONE
+        val threadsVisibility = if (isQnn) View.GONE else View.VISIBLE
+        binding.tvAsrThreadsLabel.visibility = threadsVisibility
+        binding.sliderAsrThreads.visibility = threadsVisibility
+        binding.tvAsrThreadsHint.visibility = threadsVisibility
         binding.sliderAsrThreads.isEnabled = !isMlkit
         binding.tvAsrThreadsLabel.isEnabled = !isMlkit
         binding.tvMlkitLocaleLabel.visibility = if (isMlkit) View.VISIBLE else View.GONE
@@ -430,6 +447,19 @@ class SettingsFragment : Fragment() {
         val model = ModelInfo.getModelById(prefs.selectedModelId)
         val downloaded = modelManager.isModelDownloaded(model)
 
+        if (isQnn) {
+            val available = model.archiveUrl.isNotBlank()
+            binding.tvModelStatus.text = getString(if (downloaded) R.string.model_qnn_installed
+                else if (available) R.string.model_qnn_not_installed else R.string.model_qnn_download_unavailable)
+            binding.tvModelStatus.setTextColor(ContextCompat.getColor(requireContext(), if (downloaded) R.color.success else R.color.warning))
+            binding.btnDownloadModel.setText(if (downloaded) R.string.status_ready else R.string.btn_download)
+            binding.btnDownloadModel.isEnabled = !isDownloading && !downloaded && available
+            binding.btnDeleteModel.visibility = if (modelManager.getModelDir(model).exists()) View.VISIBLE else View.GONE
+            binding.btnDeleteModel.isEnabled = !isDownloading
+            return
+        }
+        binding.btnDeleteModel.isEnabled = !isDownloading
+
         if (downloaded) {
             binding.tvModelStatus.text = getString(R.string.status_ready)
             binding.tvModelStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.success))
@@ -447,7 +477,8 @@ class SettingsFragment : Fragment() {
 
     private fun supportsStreamingPreview(modelId: String): Boolean = when (modelId) {
         AppPreferences.MODEL_NEMOTRON_STREAMING,
-        AppPreferences.MODEL_NEMOTRON_STREAMING_560MS -> true
+        AppPreferences.MODEL_FLUID_SPEECH_PRO,
+        AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN -> true
         else -> false
     }
 
@@ -551,12 +582,64 @@ class SettingsFragment : Fragment() {
         }
     }
 
+    private fun startQnnDownload() {
+        if (isDownloading || ModelInfo.FLUID_SPEECH_PRO_QNN.archiveUrl.isBlank()) return
+        val ui = _binding ?: return
+        val owner = viewLifecycleOwner
+        isDownloading = true
+        ui.model1120ms.isEnabled = false
+        ui.modelFluidSpeechPro.isEnabled = false
+        ui.modelFluidSpeechProQnn.isEnabled = false
+        ui.modelMlkitAdvanced.isEnabled = false
+        ui.btnDownloadModel.isEnabled = false
+        ui.btnDeleteModel.isEnabled = false
+        ui.layoutDownloadProgress.visibility = View.VISIBLE
+        ui.progressBarModel.progress = 0
+        ui.tvProgressPercent.text = "Starting..."
+        ui.btnCancelModelDownload.visibility = View.VISIBLE
+        ui.btnCancelModelDownload.isEnabled = true
+        qnnDownloadJob = owner.lifecycleScope.launch {
+            try {
+                // Drain native use before replacing an already installed model.
+                speechEngine.releaseEngine().join()
+                val result = modelManager.downloadModel(ModelInfo.FLUID_SPEECH_PRO_QNN) { step, progress ->
+                    owner.lifecycleScope.launch(Dispatchers.Main) {
+                        if (_binding === ui && isDownloading) {
+                            ui.progressBarModel.progress = progress
+                            ui.tvProgressPercent.text = "$step $progress%"
+                        }
+                    }
+                }
+                if (_binding === ui && isAdded) {
+                    Toast.makeText(requireContext(), if (result.isSuccess) R.string.model_qnn_download_success
+                        else R.string.model_qnn_download_failed, Toast.LENGTH_LONG).show()
+                }
+            } catch (e: CancellationException) {
+                if (_binding === ui && isAdded) {
+                    Toast.makeText(requireContext(), R.string.model_qnn_download_cancelled, Toast.LENGTH_LONG).show()
+                }
+                throw e
+            } finally {
+                if (_binding === ui) {
+                    isDownloading = false
+                    qnnDownloadJob = null
+                    ui.model1120ms.isEnabled = true
+                    ui.modelFluidSpeechPro.isEnabled = true
+                    ui.modelFluidSpeechProQnn.isEnabled = true
+                    ui.layoutDownloadProgress.visibility = View.GONE
+                    ui.btnCancelModelDownload.visibility = View.GONE
+                    updateModelStatus()
+                }
+            }
+        }
+    }
+
     private fun startModelDownload() {
         val model = ModelInfo.getModelById(prefs.selectedModelId)
         isDownloading = true
-        binding.model560ms.isEnabled = false
         binding.model1120ms.isEnabled = false
         binding.modelFluidSpeechPro.isEnabled = false
+        binding.modelFluidSpeechProQnn.isEnabled = false
         binding.modelMlkitAdvanced.isEnabled = false
         binding.btnDownloadModel.isEnabled = false
         binding.layoutDownloadProgress.visibility = View.VISIBLE
@@ -575,9 +658,9 @@ class SettingsFragment : Fragment() {
 
             withContext(Dispatchers.Main) {
                 isDownloading = false
-                binding.model560ms.isEnabled = true
                 binding.model1120ms.isEnabled = true
                 binding.modelFluidSpeechPro.isEnabled = true
+                binding.modelFluidSpeechProQnn.isEnabled = true
                 binding.layoutDownloadProgress.visibility = View.GONE
 
                 if (result.isSuccess) {
@@ -855,6 +938,8 @@ class SettingsFragment : Fragment() {
         mlkitMessage = R.string.mlkit_checking
         mlkitProgress = null
         mlkitDownloading = false
+        qnnDownloadJob?.cancel()
+        qnnDownloadJob = null
         isDownloading = false
         super.onDestroyView()
         _binding = null

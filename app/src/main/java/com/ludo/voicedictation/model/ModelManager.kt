@@ -17,6 +17,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.zip.ZipInputStream
 
 class ModelManager(private val context: Context) {
 
@@ -65,6 +66,7 @@ class ModelManager(private val context: Context) {
         var staging: File? = null
         try {
             if (isModelDownloaded(model)) return@withContext Result.success(Unit)
+            check(model.archiveUrl.isNotBlank()) { "Model download is not available yet" }
             // Work in a private, unique staging directory, never in an installed model.
             val workDir = File(modelsDir, ".model-install-${UUID.randomUUID()}")
             check(workDir.mkdir()) { "Could not create model staging directory" }
@@ -72,7 +74,20 @@ class ModelManager(private val context: Context) {
             val stagedModel = File(workDir, "model")
             check(stagedModel.mkdir()) { "Could not create model staging directory" }
             onProgress("Downloading ${model.displayName}...", 10)
-            if (model.directFiles.isNotEmpty()) {
+            if (model.archiveFormat == ModelArchiveFormat.ZIP) {
+                check(model.archiveSize != null && model.archiveSize > 0 &&
+                    model.archiveSha256?.matches(Regex("[0-9a-f]{64}")) == true) {
+                    "Invalid model archive metadata"
+                }
+                val archiveFile = File(workDir, "archive.zip")
+                downloadFileWithRedirects(model.archiveUrl, archiveFile, model.archiveSha256,
+                    { jobContext.ensureActive() }, model.archiveSize) { current, _ ->
+                    val pct = 10 + ((current * 75) / model.archiveSize).toInt()
+                    onProgress("Downloading ${model.displayName}...", pct)
+                }
+                onProgress("Extracting and checking model...", 85)
+                extractVerifiedZip(archiveFile, stagedModel, model, { jobContext.ensureActive() }, onProgress)
+            } else if (model.directFiles.isNotEmpty()) {
                 val names = model.directFiles.map { it.name }
                 check(names.toSet().size == names.size && names.all {
                     it.isNotEmpty() && File(it).name == it && it != "." && it != ".."
@@ -107,19 +122,7 @@ class ModelManager(private val context: Context) {
             check(hasModelFiles(model, stagedModel)) { "Model extraction verification failed" }
             jobContext.ensureActive()
 
-            // Keep any pre-existing partial directory intact instead of deleting user data.
-            val target = getModelDir(model)
-            val backup = if (target.exists()) {
-                File(modelsDir, "${model.dirName}.preserved-${UUID.randomUUID()}").also {
-                    check(target.renameTo(it)) { "Could not preserve existing model directory" }
-                }
-            } else null
-            if (!stagedModel.renameTo(target)) {
-                if (backup != null && !backup.renameTo(target)) {
-                    throw IllegalStateException("Install failed; previous files preserved at ${backup.name}")
-                }
-                throw IllegalStateException("Could not install model files")
-            }
+            installStagedModel(model, stagedModel)
 
             onProgress("Model ready!", 100)
             Result.success(Unit)
@@ -130,6 +133,79 @@ class ModelManager(private val context: Context) {
             Result.failure(e)
         } finally {
             staging?.deleteRecursively()
+        }
+    }
+
+    /** Extract only the pinned root files, without trusting ZIP paths, sizes or contents. */
+    private fun extractVerifiedZip(
+        archiveFile: File,
+        stagedModel: File,
+        model: ModelInfo,
+        checkCancelled: () -> Unit,
+        onProgress: (step: String, progress: Int) -> Unit
+    ) {
+        val specs = model.directFiles.associateBy { it.name }
+        val required = setOf(model.encoderFileName, model.decoderFileName, model.joinerFileName, model.tokensFileName)
+        check(required.size == 4 && model.directFiles.size == 4 && specs.size == 4 && specs.keys == required &&
+            specs.values.all { it.name.isNotEmpty() && File(it.name).name == it.name &&
+                it.name != "." && it.name != ".." && it.size > 0 &&
+                it.sha256.matches(Regex("[0-9a-f]{64}")) }) { "Invalid model file catalog" }
+        val seen = mutableSetOf<String>()
+        val totalBytes = model.directFiles.sumOf { it.size }
+        var completed = 0L
+        var lastReport = 0L
+        ZipInputStream(BufferedInputStream(archiveFile.inputStream())).use { zip ->
+            val buffer = ByteArray(32768)
+            while (true) {
+                checkCancelled()
+                val entry = zip.nextEntry ?: break
+                val spec = specs[entry.name]
+                check(spec != null && !entry.isDirectory && seen.add(entry.name)) {
+                    "ZIP must contain exactly the four required root files, without duplicates"
+                }
+                check(entry.size < 0 || entry.size == spec.size) { "Unexpected model file size" }
+                val digest = MessageDigest.getInstance("SHA-256")
+                var count = 0L
+                FileOutputStream(File(stagedModel, spec.name)).use { output ->
+                    while (true) {
+                        checkCancelled()
+                        val n = zip.read(buffer)
+                        if (n < 0) break
+                        count += n
+                        check(count <= spec.size) { "Model file is too large" }
+                        output.write(buffer, 0, n)
+                        digest.update(buffer, 0, n)
+                        val now = System.currentTimeMillis()
+                        if (now - lastReport >= 200) {
+                            lastReport = now
+                            onProgress("Extracting and checking model...", 85 + (((completed + count) * 14) / totalBytes).toInt())
+                        }
+                    }
+                }
+                // Fully reading the entry also verifies its ZIP CRC where available.
+                zip.closeEntry()
+                check(count == spec.size) { "Incomplete model file" }
+                val hash = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                check(hash == spec.sha256) { "Model checksum mismatch" }
+                completed += count
+            }
+        }
+        check(seen == specs.keys && hasModelFiles(model, stagedModel)) { "ZIP is missing required model files" }
+    }
+
+    private fun installStagedModel(model: ModelInfo, stagedModel: File) {
+        // Preserve even a partial previous installation; never remove it automatically.
+        val target = getModelDir(model)
+        val backup = if (target.exists()) {
+            File(modelsDir, "${model.dirName}.preserved-${UUID.randomUUID()}").also {
+                check(target.renameTo(it)) { "Could not preserve existing model directory" }
+            }
+        } else null
+        if (!stagedModel.renameTo(target)) {
+            if (backup != null && !backup.renameTo(target)) {
+                throw IllegalStateException("Install failed; previous files preserved at ${backup.name}")
+            }
+            throw IllegalStateException("Could not install model files")
         }
     }
 

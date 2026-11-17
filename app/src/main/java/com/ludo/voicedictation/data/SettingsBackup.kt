@@ -14,7 +14,7 @@ internal object SettingsBackup {
     private const val VERSION = 1
     private const val MAX_JSON_CHARS = 1_000_000
     private val booleans = setOf(
-        "service_enabled", "streaming_preview_enabled", "avoid_autofill_overlay_collisions",
+        "service_enabled", "streaming_preview_enabled", "fluid_streaming_enabled", "avoid_autofill_overlay_collisions",
         "always_show_overlay", "vocabulary_spelling_enabled", "acoustic_vocabulary_enabled",
         "transcript_removal_enabled", "string_replacement_enabled", "transcript_polishing_enabled",
         "static_numeric_corrections_enabled", "polishing_auto_number_sequences"
@@ -124,7 +124,7 @@ internal object SettingsBackup {
             val valid = when (key) {
                 "selected_model" -> text in setOf(AppPreferences.MODEL_NEMOTRON_STREAMING,
                     AppPreferences.MODEL_NEMOTRON_STREAMING_560MS, AppPreferences.MODEL_MLKIT_ADVANCED,
-                    AppPreferences.MODEL_FLUID_SPEECH_PRO)
+                    AppPreferences.MODEL_FLUID_SPEECH_PRO, AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN)
                 "mlkit_locale_tag" -> text in locales
                 "nemotron_language" -> NemotronLanguages.isValid(text)
                 "preferred_microphone_v1" -> text.matches(Regex("[0-9a-f]{64}"))

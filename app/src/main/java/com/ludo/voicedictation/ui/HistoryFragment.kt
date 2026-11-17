@@ -6,11 +6,13 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.ludo.voicedictation.R
@@ -22,6 +24,13 @@ import com.ludo.voicedictation.asr.TranscriptPolisher
 import com.ludo.voicedictation.asr.TranscriptPolishingConfiguration
 import com.ludo.voicedictation.databinding.TabHistoryBinding
 import java.lang.ref.WeakReference
+import java.text.NumberFormat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class HistoryFragment : Fragment() {
 
@@ -32,9 +41,12 @@ class HistoryFragment : Fragment() {
     private lateinit var adapter: HistoryAdapter
     private var mediaPlayer: MediaPlayer? = null
     private var playingAudioItemId: String? = null
+    private var playbackReady = false
+    private var playbackSpeed = 1f
     private val reprocessOwner = Any()
     private var reprocessingItemId: String? = null
     private var reprocessCancelling = false
+    private var durationJob: Job? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -76,6 +88,7 @@ class HistoryFragment : Fragment() {
                 Toast.makeText(requireContext(), "Transcription and recording deleted", Toast.LENGTH_SHORT).show()
             },
             onPlayAudioClicked = ::toggleAudioPlayback,
+            onPlaybackSpeedClicked = ::setPlaybackSpeed,
             onReprocessAudioClicked = ::requestAudioReprocess,
             hasAudio = { item -> HistoryAudioStore.find(requireContext(), item.audioFileName) != null }
         )
@@ -140,7 +153,11 @@ class HistoryFragment : Fragment() {
             if (mediaPlayer !== player || _binding == null) {
                 runCatching { prepared.release() }
             } else {
-                runCatching { prepared.start() }.onFailure {
+                runCatching {
+                    prepared.start()
+                    playbackReady = true
+                    adapter.setPlaybackState(playbackSpeed, true)
+                }.onFailure {
                     finishAudioPlayback(player)
                     showPlaybackError()
                 }
@@ -153,6 +170,21 @@ class HistoryFragment : Fragment() {
             finishAudioPlayback(player)
             showPlaybackError()
         }
+    }
+
+    private fun setPlaybackSpeed(speed: Float) {
+        val player = mediaPlayer ?: return
+        if (!playbackReady || speed == playbackSpeed) return
+        runCatching { player.playbackParams = player.playbackParams.setSpeed(speed) }
+            .onSuccess {
+                playbackSpeed = speed
+                adapter.setPlaybackState(speed, true)
+            }
+            .onFailure {
+                if (_binding != null && isAdded) {
+                    Toast.makeText(requireContext(), R.string.history_audio_speed_error, Toast.LENGTH_SHORT).show()
+                }
+            }
     }
 
     private fun requestAudioReprocess(item: HistoryItem) {
@@ -204,12 +236,14 @@ class HistoryFragment : Fragment() {
 
         val preferences = prefs
         val fragment = WeakReference(this)
+        val startedAt = SystemClock.elapsedRealtime()
         val listener = object : SpeechEngine.ExternalListener {
             override fun onState(state: String) = Unit
 
             override fun onFinished(text: String?, error: String?) {
+                val elapsedMillis = SystemClock.elapsedRealtime() - startedAt
                 val updated = text?.let { preferences.updateHistoryTranscript(item.id, it) } == true
-                fragment.get()?.finishAudioReprocess(item.id, updated, text != null, error)
+                fragment.get()?.finishAudioReprocess(item.id, updated, text != null, error, elapsedMillis)
             }
         }
         val authorizedPolishing = polishingConfiguration?.takeIf { prefs.transcriptPolishingEnabled }
@@ -236,7 +270,7 @@ class HistoryFragment : Fragment() {
         SpeechEngine.getInstance(requireContext()).cancelHistoryReprocess(reprocessOwner)
     }
 
-    private fun finishAudioReprocess(itemId: String, updated: Boolean, hadText: Boolean, error: String?) {
+    private fun finishAudioReprocess(itemId: String, updated: Boolean, hadText: Boolean, error: String?, elapsedMillis: Long) {
         if (reprocessingItemId == itemId) {
             reprocessingItemId = null
             reprocessCancelling = false
@@ -244,9 +278,11 @@ class HistoryFragment : Fragment() {
         }
         if (_binding != null && isAdded) {
             val message = when {
-                updated -> R.string.history_audio_reprocess_done
+                updated -> getString(R.string.history_audio_reprocess_done, NumberFormat.getNumberInstance().apply {
+                    maximumFractionDigits = 2
+                }.format(elapsedMillis / 1000.0))
                 hadText -> null // The history entry was deleted before completion.
-                error != null -> R.string.history_audio_reprocess_failed
+                error != null -> getString(R.string.history_audio_reprocess_failed)
                 else -> null // User cancelled; preserve the current transcript.
             }
             message?.let { Toast.makeText(requireContext(), it, Toast.LENGTH_LONG).show() }
@@ -261,6 +297,8 @@ class HistoryFragment : Fragment() {
         }
         mediaPlayer = null
         playingAudioItemId = null
+        playbackReady = false
+        playbackSpeed = 1f
         runCatching { player.release() }
         if (::adapter.isInitialized && _binding != null) adapter.setPlayingItemId(null)
     }
@@ -269,6 +307,8 @@ class HistoryFragment : Fragment() {
         val player = mediaPlayer
         mediaPlayer = null
         playingAudioItemId = null
+        playbackReady = false
+        playbackSpeed = 1f
         if (player != null) {
             runCatching { if (player.isPlaying) player.stop() }
             runCatching { player.release() }
@@ -288,6 +328,17 @@ class HistoryFragment : Fragment() {
             stopAudioPlayback()
         }
         adapter.updateItems(history)
+        durationJob?.cancel()
+        val appContext = requireContext().applicationContext
+        durationJob = viewLifecycleOwner.lifecycleScope.launch {
+            val durations = withContext(Dispatchers.IO) {
+                history.associate {
+                    currentCoroutineContext().ensureActive()
+                    it.id to HistoryAudioStore.durationSeconds(appContext, it.audioFileName)
+                }
+            }
+            adapter.updateDurations(durations)
+        }
         binding.tvHistoryHeader.text = "Transcription History (${history.size}/${prefs.historyLimit})"
 
         if (history.isEmpty()) {
@@ -307,6 +358,8 @@ class HistoryFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        durationJob?.cancel()
+        durationJob = null
         stopAudioPlayback()
         binding.rvHistory.adapter = null
         if (::adapter.isInitialized) adapter.updateItems(emptyList())

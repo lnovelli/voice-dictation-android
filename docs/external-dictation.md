@@ -147,7 +147,8 @@ UID and explicit binding. Command **5** carries `audio_fd` as a readable pipe
 `encoding` as String `pcm_s16le`. The sender closes its transferred read descriptor;
 the provider owns its duplicate and reads ordered raw PCM off Main. Command 4 still
 accepts only a completed regular file and rejects a pipe. Command 5 requires the
-selected, downloaded Nemotron model; ML Kit is not a streaming alternative. It needs
+selected, downloaded Nemotron or Fluid CPU/NPU model; ML Kit is not supported for
+remote PCM. It needs
 neither microphone permission nor donated microphone capability. Busy and other
 admission failures return ERROR. `STATE` `recording` indicates that the pipe has been
 accepted and is ready to read; it does not mean the phone microphone was opened.
@@ -157,19 +158,22 @@ sample, including the last short block. Only after explicit user Stop and the cl
 own complete-stream verification, close the pipe writer and send command **6** with
 the same owner/envelope and `byte_count` as Long (even, 2 through 9,600,000) and
 `sha256` as exactly 64 lowercase hexadecimal characters over the raw PCM bytes.
-While the pipe is still streaming, the Nemotron decoder may emit `PARTIAL` (102)
+While the pipe is still streaming, Nemotron or Fluid CPU/NPU may emit `PARTIAL` (102)
 to the authenticated owner's callback. Each `text` replaces the previous full
 unvalidated hypothesis, including an empty string when the hypothesis clears. Checks
 are throttled to at most one per 250 ms, pending callbacks are coalesced, and full
-hypotheses over 4096 UTF-16 code units are omitted rather than truncated. Previews
+hypotheses over 4096 UTF-16 code units are omitted rather than truncated. Fluid uses
+repeated offline decoding, not a stateful streaming decoder, and remote previews do not
+depend on the local overlay preview preference. Previews
 are not final, transformed, logged or saved to History. They can differ from or
 disappear before the final result; clients must not submit them. Events cease on
 FINISH, EOF, input failure or cancellation, and queued events are session-guarded.
 Local live and completed-file IPC still emit no partials.
 
 FINISH and observed EOF may race. The provider waits for both, independently checks
-length and digest, and only then flushes the existing online decoder and publishes
-final text/History. EOF alone is not consent. Missing FINISH waits for cancellation or
+length and digest, and only then flushes the Nemotron online decoder or runs Fluid's
+full offline final pass before publishing final text/History. EOF alone is not consent.
+Missing FINISH waits for cancellation or
 the fifteen-minute session timeout; missing EOF also times out. Mismatch, invalid or
 duplicate FINISH, oversized/odd/empty PCM, cancellation, death and unbind cannot
 produce a result. CANCEL=3 uses the same UID, exact session and callback Binder;

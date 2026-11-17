@@ -12,4 +12,8 @@ Remote polishing is optional and off by default. Explicitly identify endpoint/mo
 
 History stores bounded, validated original WAV audio against the same live-capture cap, not the smaller completed-file IPC limit. Reprocessing uses the current selected model and text settings in a single streaming session. Preserve original PCM, selected row ID, timestamp and old transcript until a nonblank success; update that row exactly once and bypass generic add-new-history handling. Cancel, blank and failure leave it intact. If polishing is requested, preflight explicit consent identifying endpoint/model, prompt, transcript and vocabulary; snapshot the authorized configuration so later settings cannot redirect it. History results never auto-paste or submit.
 
+Each History row displays recording duration in seconds, derived from the validated original WAV header off the UI thread; missing or invalid audio is reported as unavailable, not zero.
+
+During History playback, 1x, 1.5x and 2x controls change the active player's speed without restarting it; playback begins at 1x and ends on pause or view teardown. A successful reprocess toast reports monotonic elapsed seconds from starting the retry through completion, excluding confirmation; cancellation and failure do not report a success duration.
+
 Formerly missing History recordings cannot be recovered from transcripts.

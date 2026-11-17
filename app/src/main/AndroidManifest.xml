@@ -22,6 +22,7 @@
     <application
         android:name=".VoiceDictationApp"
         android:allowBackup="true"
+        android:extractNativeLibs="true"
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
@@ -30,6 +31,9 @@
         android:supportsRtl="true"
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.VoiceDictation">
+
+        <!-- Optional so CPU recognition remains installable without Qualcomm FastRPC. -->
+        <uses-native-library android:name="libcdsprpc.so" android:required="false" />
 
         <activity
             android:name=".ui.MainActivity"

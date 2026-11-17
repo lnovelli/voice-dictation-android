@@ -1,5 +1,7 @@
 package com.ludo.voicedictation.ui
 
+import android.content.Context
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -29,6 +31,10 @@ class VocabularyFragment : Fragment() {
     private lateinit var adapter: VocabularyAdapter
     private lateinit var replacementAdapter: StringReplacementAdapter
     private lateinit var speechEngine: SpeechEngine
+    private lateinit var preferenceStore: SharedPreferences
+    private val modelPreferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "selected_model" && _binding != null) updateModelVisibility()
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -44,6 +50,9 @@ class VocabularyFragment : Fragment() {
         val context = requireContext()
         prefs = AppPreferences(context)
         speechEngine = SpeechEngine.getInstance(context)
+        preferenceStore = context.getSharedPreferences("voice_dictation_prefs", Context.MODE_PRIVATE)
+        preferenceStore.registerOnSharedPreferenceChangeListener(modelPreferenceListener)
+        updateModelVisibility()
 
         binding.switchVocabularySpellingVocab.isChecked = prefs.vocabularySpellingEnabled
         binding.switchVocabularySpellingVocab.setOnCheckedChangeListener { _, enabled ->
@@ -56,6 +65,25 @@ class VocabularyFragment : Fragment() {
         setupAcousticControls()
         setupStringReplacements()
         refreshList()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateModelVisibility()
+    }
+
+    private fun updateModelVisibility() {
+        val isNemotron = prefs.selectedModelId == AppPreferences.MODEL_NEMOTRON_STREAMING
+        binding.acousticVocabularyControls.visibility = if (isNemotron) View.VISIBLE else View.GONE
+        if (isNemotron) {
+            binding.tvVocabularySpellingHint.setText(R.string.vocabulary_spelling_hint)
+            binding.tvVocabularyHint.setText(R.string.vocabulary_hint)
+            binding.tvEmptyVocabulary.setText(R.string.empty_vocabulary)
+        } else {
+            binding.tvVocabularySpellingHint.text = "Post-transcript spelling only: recases or joins/splits spaces when the recognized letters already match. These hints cannot correct sound-alike recognition."
+            binding.tvVocabularyHint.text = "Add names or technical terms here to use as post-transcript spelling hints."
+            binding.tvEmptyVocabulary.text = "No custom terms yet. Add terms above to use as spelling hints."
+        }
     }
 
     private fun setupAcousticControls() {
@@ -289,6 +317,7 @@ class VocabularyFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        preferenceStore.unregisterOnSharedPreferenceChangeListener(modelPreferenceListener)
         super.onDestroyView()
         _binding = null
     }

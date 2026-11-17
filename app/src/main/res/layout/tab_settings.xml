@@ -53,12 +53,6 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
                     <RadioButton
-                        android:id="@+id/model560ms"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="Nemotron 3.5 streaming — 560 ms"
-                        android:textColor="@color/text_primary" />
-                    <RadioButton
                         android:id="@+id/model1120ms"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -71,6 +65,12 @@
                         android:text="@string/model_fluid_speech_pro"
                         android:textColor="@color/text_primary" />
                     <RadioButton
+                        android:id="@+id/modelFluidSpeechProQnn"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/model_fluid_speech_pro_qnn"
+                        android:textColor="@color/text_primary" />
+                    <RadioButton
                         android:id="@+id/modelMlkitAdvanced"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -80,6 +80,7 @@
                 </RadioGroup>
 
                 <TextView
+                    android:id="@+id/tvNemotronDescription"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/model_nemotron_streaming_desc"
@@ -87,15 +88,31 @@
                     android:textSize="12sp"
                     android:layout_marginStart="32dp"
                     android:layout_marginBottom="12dp" />
-                <TextView
+                <LinearLayout
+                    android:id="@+id/layoutFluidSettings"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/model_fluid_speech_pro_desc"
-                    android:autoLink="web"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/model_fluid_speech_pro_desc"
+                        android:autoLink="web"
+                        android:textColor="@color/text_secondary"
+                        android:textColorLink="@color/accent"
+                        android:textSize="12sp"
+                        android:layout_marginBottom="12dp" />
+                </LinearLayout>
+                <TextView
+                    android:id="@+id/tvFluidQnnDescription"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/model_fluid_speech_pro_qnn_desc"
                     android:textColor="@color/text_secondary"
-                    android:textColorLink="@color/accent"
                     android:textSize="12sp"
-                    android:layout_marginBottom="12dp" />
+                    android:layout_marginBottom="12dp"
+                    android:visibility="gone" />
                 <TextView
                     android:id="@+id/tvNemotronLanguageLabel"
                     android:layout_width="match_parent"
@@ -115,77 +132,84 @@
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp"
                     android:layout_marginBottom="12dp" />
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/mlkit_details"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="12sp" />
-                <TextView
-                    android:id="@+id/tvMlkitLocaleLabel"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:labelFor="@id/spinnerMlkitLocale"
-                    android:text="@string/mlkit_locale_label"
-                    android:textColor="@color/text_primary"
-                    android:visibility="gone" />
-                <Spinner
-                    android:id="@+id/spinnerMlkitLocale"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:visibility="gone" />
-                <TextView
-                    android:id="@+id/tvMlkitAvailability"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:accessibilityLiveRegion="polite"
-                    android:text="@string/mlkit_checking"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="12sp" />
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnCheckMlkit"
-                    style="@style/Widget.Material3.Button.TextButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/mlkit_check_again" />
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="@string/mlkit_diagnostics_title"
-                    android:textColor="@color/text_primary"
-                    android:textStyle="bold" />
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/mlkit_diagnostics_hint"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="12sp" />
                 <LinearLayout
+                    android:id="@+id/layoutMlkitSettings"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal">
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnMlkitDiagnosticsView"
-                        style="@style/Widget.Material3.Button.OutlinedButton"
-                        android:layout_width="0dp"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+                    <TextView
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/mlkit_diagnostics_view" />
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnMlkitDiagnosticsCopy"
-                        style="@style/Widget.Material3.Button.OutlinedButton"
-                        android:layout_width="0dp"
+                        android:text="@string/mlkit_details"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp" />
+                    <TextView
+                        android:id="@+id/tvMlkitLocaleLabel"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/mlkit_diagnostics_copy" />
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnMlkitDiagnosticsClear"
-                        style="@style/Widget.Material3.Button.OutlinedButton"
-                        android:layout_width="0dp"
+                        android:labelFor="@id/spinnerMlkitLocale"
+                        android:text="@string/mlkit_locale_label"
+                        android:textColor="@color/text_primary"
+                        android:visibility="gone" />
+                    <Spinner
+                        android:id="@+id/spinnerMlkitLocale"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:visibility="gone" />
+                    <TextView
+                        android:id="@+id/tvMlkitAvailability"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/mlkit_diagnostics_clear" />
+                        android:accessibilityLiveRegion="polite"
+                        android:text="@string/mlkit_checking"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnCheckMlkit"
+                        style="@style/Widget.Material3.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/mlkit_check_again" />
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/mlkit_diagnostics_title"
+                        android:textColor="@color/text_primary"
+                        android:textStyle="bold" />
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/mlkit_diagnostics_hint"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnMlkitDiagnosticsView"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/mlkit_diagnostics_view" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnMlkitDiagnosticsCopy"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/mlkit_diagnostics_copy" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnMlkitDiagnosticsClear"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/mlkit_diagnostics_clear" />
+                    </LinearLayout>
                 </LinearLayout>
             </LinearLayout>
 
@@ -212,6 +236,7 @@
                 app:trackColorInactive="@color/surface_variant_dark" />
 
             <TextView
+                android:id="@+id/tvAsrThreadsHint"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/asr_threads_hint"
@@ -294,6 +319,13 @@
                     android:textSize="12sp"
                     android:gravity="end"
                     android:layout_marginTop="4dp" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnCancelModelDownload"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@android:string/cancel"
+                    android:visibility="gone" />
             </LinearLayout>
 
             <!-- Model Action Buttons -->

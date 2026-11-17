@@ -2,6 +2,8 @@ package com.ludo.voicedictation.model
 
 data class ModelFile(val name: String, val size: Long, val sha256: String)
 
+enum class ModelArchiveFormat { TAR_BZ2, ZIP }
+
 data class ModelInfo(
     val id: String,
     val displayName: String,
@@ -14,9 +16,32 @@ data class ModelInfo(
     val tokensFileName: String = "tokens.txt",
     val streaming: Boolean = false,
     val archiveSha256: String? = null,
-    val directFiles: List<ModelFile> = emptyList()
+    val directFiles: List<ModelFile> = emptyList(),
+    val archiveFormat: ModelArchiveFormat = ModelArchiveFormat.TAR_BZ2,
+    val archiveSize: Long? = null
 ) {
     companion object {
+        // SM8750 QNN context binaries generated together and pinned as one ZIP.
+        val FLUID_SPEECH_PRO_QNN = ModelInfo(
+            id = "fluid_speech_pro_qnn_sm8750",
+            displayName = "Fluid Speech Pro NPU (SM8750)",
+            description = "Experimental, untested Galaxy S25 Snapdragon 8 Elite NPU model.",
+            archiveUrl = "https://secure.ipv64.net/download/fluid-speech-pro-qnn-sm8750-10s-f76d03ca.zip",
+            dirName = "fluid-speech-pro-qnn-sm8750",
+            encoderFileName = "encoder.bin",
+            decoderFileName = "decoder.bin",
+            joinerFileName = "joiner.bin",
+            tokensFileName = "tokens.txt",
+            archiveFormat = ModelArchiveFormat.ZIP,
+            archiveSize = 642588808L,
+            archiveSha256 = "f76d03ca188744dfb576890aee4a81b6987dc89a1e71b44ebabcad6817de4ced",
+            directFiles = listOf(
+                ModelFile("encoder.bin", 612241408L, "c964659bc74dfeb00f67e7142af8e9abbda8bea68c26df3408f5dda45bed7323"),
+                ModelFile("decoder.bin", 23715840L, "e292ef57f04425d6d083c0a87cd3f59ff547ebd207ec7653650ab3d76707aa1b"),
+                ModelFile("joiner.bin", 6537216L, "3b27d31ccdeb8ecc02d5b0b048fb05c96ce4815c8eb4aa17a85b1bb10f87e404"),
+                ModelFile("tokens.txt", 93934L, "06c76ebf093e64fbcc1699b42a174022f3e6c8c8073090e8de782403f5c8905b")
+            )
+        )
         // The split sherpa-onnx int8 graphs refer to the adjacent .onnx.data files by name.
         // vocab.txt is a Git blob; its SHA-256 is computed from the pinned revision's bytes.
         private const val FLUID_REVISION = "fa588e9f87f1b9ad0ca2e2d8f7eaf84dc3803581"
@@ -65,6 +90,7 @@ data class ModelInfo(
             return when (id) {
                 NEMOTRON_STREAMING_560MS.id -> NEMOTRON_STREAMING_560MS
                 FLUID_SPEECH_PRO.id -> FLUID_SPEECH_PRO
+                FLUID_SPEECH_PRO_QNN.id -> FLUID_SPEECH_PRO_QNN
                 else -> NEMOTRON_STREAMING
             }
         }

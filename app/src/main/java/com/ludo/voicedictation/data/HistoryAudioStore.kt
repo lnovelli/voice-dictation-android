@@ -77,31 +77,43 @@ object HistoryAudioStore {
         }.getOrNull()
     }
 
+    /** Reads only the validated WAV header, not the recording. Call off the main thread. */
+    fun durationSeconds(context: Context, fileName: String?): Double? = runCatching {
+        val file = find(context, fileName) ?: return null
+        DataInputStream(FileInputStream(file)).use { input ->
+            validatedDataBytes(input, file.length()) / (SAMPLE_RATE * 2.0)
+        }
+    }.getOrNull()
+
+    private fun validatedDataBytes(input: DataInputStream, size: Long): Long {
+        val header = ByteArray(WAV_HEADER_BYTES)
+        input.readFully(header)
+        fun tag(offset: Int, value: String) =
+            String(header, offset, value.length, Charsets.US_ASCII) == value
+        fun uint16(offset: Int): Int =
+            (header[offset].toInt() and 0xff) or ((header[offset + 1].toInt() and 0xff) shl 8)
+        fun uint32(offset: Int): Long =
+            (header[offset].toLong() and 0xff) or
+                ((header[offset + 1].toLong() and 0xff) shl 8) or
+                ((header[offset + 2].toLong() and 0xff) shl 16) or
+                ((header[offset + 3].toLong() and 0xff) shl 24)
+
+        val dataBytes = uint32(40)
+        require(tag(0, "RIFF") && tag(8, "WAVE") && tag(12, "fmt ") && tag(36, "data") &&
+            uint32(4) == size - 8 && uint32(16) == 16L && uint16(20) == 1 &&
+            uint16(22) == 1 && uint32(24) == SAMPLE_RATE.toLong() &&
+            uint32(28) == SAMPLE_RATE * 2L && uint16(32) == 2 && uint16(34) == 16 &&
+            dataBytes == size - WAV_HEADER_BYTES && dataBytes in 2..(MAX_SAMPLES * 2L) && dataBytes % 2L == 0L) {
+            "Saved WAV is invalid or uses an unsupported audio format."
+        }
+        return dataBytes
+    }
+
     /** Reads only this store's bounded PCM16 mono 16 kHz WAV format. */
     fun readSamples(context: Context, fileName: String?): FloatArray {
         val file = find(context, fileName) ?: throw IOException("Saved recording is unavailable.")
         return DataInputStream(FileInputStream(file)).use { input ->
-            val header = ByteArray(WAV_HEADER_BYTES)
-            input.readFully(header)
-            fun tag(offset: Int, value: String) =
-                String(header, offset, value.length, Charsets.US_ASCII) == value
-            fun uint16(offset: Int): Int =
-                (header[offset].toInt() and 0xff) or ((header[offset + 1].toInt() and 0xff) shl 8)
-            fun uint32(offset: Int): Long =
-                (header[offset].toLong() and 0xff) or
-                    ((header[offset + 1].toLong() and 0xff) shl 8) or
-                    ((header[offset + 2].toLong() and 0xff) shl 16) or
-                    ((header[offset + 3].toLong() and 0xff) shl 24)
-
-            val dataBytes = uint32(40)
-            val size = file.length()
-            require(tag(0, "RIFF") && tag(8, "WAVE") && tag(12, "fmt ") && tag(36, "data") &&
-                uint32(4) == size - 8 && uint32(16) == 16L && uint16(20) == 1 &&
-                uint16(22) == 1 && uint32(24) == SAMPLE_RATE.toLong() &&
-                uint32(28) == SAMPLE_RATE * 2L && uint16(32) == 2 && uint16(34) == 16 &&
-                dataBytes == size - WAV_HEADER_BYTES && dataBytes in 2..(MAX_SAMPLES * 2L) && dataBytes % 2L == 0L) {
-                "Saved WAV is invalid or uses an unsupported audio format."
-            }
+            val dataBytes = validatedDataBytes(input, file.length())
             // Decode in small blocks instead of holding a second full-size PCM byte array.
             val samples = FloatArray((dataBytes / 2).toInt())
             val pcm = ByteArray(16 * 1024)

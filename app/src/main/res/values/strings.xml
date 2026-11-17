@@ -27,15 +27,23 @@
     <string name="model_section_title">Speech Recognition Model</string>
     <string name="asr_threads_title">Recognizer threads</string>
     <string name="asr_threads_value">Recognizer threads: %1$d</string>
-    <string name="asr_threads_hint">Choose 2–4 threads for on-device Nemotron or Fluid Speech Pro recognition. Changes apply to subsequent recognition sessions. Speed, battery use and heat depend on your device.</string>
+    <string name="asr_threads_hint">Choose 2–4 threads for supported on-device recognizers. Changes apply to subsequent recognition sessions. Speed, battery use and heat depend on your device.</string>
     <string name="model_nemotron_streaming">Nemotron 3.5 ASR 560M (Multilingual, Streaming)</string>
     <string name="model_nemotron_streaming_desc">Processes audio during recording. Multilingual, with automatic language detection. INT8; ~475 MB download. Chunk size is not end-to-end latency.</string>
-    <string name="model_fluid_speech_pro">Fluid Speech Pro — offline after stop</string>
-    <string name="model_fluid_speech_pro_desc">Fluid Speech Pro by FluidVoice, CC BY 4.0: https://huggingface.co/FluidVoice-Labs/fluid-speech-pro-onnx and https://creativecommons.org/licenses/by/4.0/ . INT8 ONNX version based on NVIDIA Parakeet TDT 0.6B v3 and Moondream Parakeet Ultra. Automatically detects 25 European languages. About 801 MB download. Runs locally after stopping; no live preview. Longer recordings are split into fixed chunks, without voice activity detection.</string>
+    <string name="model_fluid_speech_pro">Fluid Speech Pro (CPU)</string>
+    <string name="model_fluid_speech_pro_qnn">Fluid Speech Pro (NPU, experimental)</string>
+    <string name="model_fluid_speech_pro_qnn_desc">Experimental and untested. Intended only for Galaxy S25 with Snapdragon 8 Elite (SM8750); recognition and device compatibility have not been verified. About 643 MB download; the archive and model files are verified before installation. Optional live previews use repeated provisional offline decodes, followed by an authoritative final pass after stopping. Existing files are preserved if installation fails; Delete removes only the active copy.</string>
+    <string name="model_qnn_installed">Model files installed (NPU untested)</string>
+    <string name="model_qnn_not_installed">NPU model not downloaded</string>
+    <string name="model_qnn_download_unavailable">NPU model download is not available yet</string>
+    <string name="model_qnn_download_success">NPU model downloaded; device recognition is untested.</string>
+    <string name="model_qnn_download_failed">Download failed. Check the connection and available storage; existing model files were kept.</string>
+    <string name="model_qnn_download_cancelled">Download cancelled or finishing; check model status.</string>
+    <string name="model_fluid_speech_pro_desc">Fluid Speech Pro by FluidVoice, CC BY 4.0: https://huggingface.co/FluidVoice-Labs/fluid-speech-pro-onnx and https://creativecommons.org/licenses/by/4.0/ . INT8 ONNX version based on NVIDIA Parakeet TDT 0.6B v3 and Moondream Parakeet Ultra. Automatically detects 25 European languages. About 801 MB download. Runs locally. Optional live previews use repeated provisional offline decodes, followed by an authoritative final pass after stopping. Longer recordings are split into chunks using voice activity detection when available.</string>
     <string name="nemotron_language_label">Nemotron recognition language</string>
     <string name="nemotron_language_auto">Auto-detect language</string>
     <string name="nemotron_language_broad">broad coverage</string>
-    <string name="nemotron_language_hint">Applied to the next Nemotron session. Broad-coverage languages may have higher error rates. Fluid Speech Pro always detects language automatically; ML Kit uses its separate locale below.</string>
+    <string name="nemotron_language_hint">Applied to the next Nemotron session. Broad-coverage languages may have higher error rates.</string>
     <string name="model_mlkit_advanced">ML Kit GenAI Speech Recognition — Advanced</string>
     <string name="mlkit_checking">ML Kit Advanced: checking device availability…</string>
     <string name="mlkit_available">ML Kit Advanced: ready to use.</string>
@@ -46,7 +54,7 @@
     <string name="mlkit_download_failed">ML Kit Advanced download failed. Check availability and try again.</string>
     <string name="mlkit_download_progress">ML Kit Advanced: %1$s downloaded</string>
     <string name="mlkit_check_again">Check ML Kit availability</string>
-    <string name="mlkit_details">ML Kit Advanced is available only on supported devices. Nemotron threads and acoustic word boosting do not apply.</string>
+    <string name="mlkit_details">ML Kit Advanced is available only on supported devices. Recognizer thread settings and acoustic word boosting do not apply.</string>
     <string name="mlkit_locale_label">ML Kit recognition language (no automatic detection)</string>
     <string name="mlkit_diagnostics_title">ML Kit diagnostics</string>
     <string name="mlkit_diagnostics_hint">Recent ML Kit diagnostic events are kept automatically in memory (up to 40), and disappear when the app process ends. The report includes the app version, status, phase, known exception class, recognized fixed SDK error type or generic reason, and optional numeric codes; it does not record device metadata, audio, transcripts, exception messages, or endpoints. Copy places the report on the system clipboard, where it may be exposed to apps or wherever you paste it.</string>
@@ -57,7 +65,7 @@
     <string name="mlkit_diagnostics_clear_message">Remove the in-memory ML Kit diagnostic events?</string>
     <string name="mlkit_diagnostics_copied">ML Kit diagnostics copied to clipboard</string>
     <string name="streaming_preview_title">Streaming dictation preview</string>
-    <string name="streaming_preview_hint">Show a movable, two-line live preview while dictating with the floating button. Preview text may be visible to others and can differ from the final transcript. Changes apply to the next recording.</string>
+    <string name="streaming_preview_hint">Show a movable, two-line live preview while dictating with the floating button. Nemotron streams; Fluid CPU and NPU use repeated provisional offline decodes and an authoritative final pass after stopping. Preview text may be visible to others and can differ from the final transcript. Changes apply to the next recording.</string>
     <string name="streaming_preview_unsupported">Live preview is not available for the selected model in this app.</string>
     
     <string name="status_not_downloaded">Not Downloaded</string>
@@ -175,8 +183,18 @@
     
     <string name="history_title">Transcription History</string>
     <string name="history_audio_hint">Original audio is stored privately on this device, excluded from backups, and removed when its history entry is deleted or trimmed. Reprocessing replaces the transcript only. Older entries have no saved audio.</string>
+    <string name="history_audio_duration">Recording: %1$s s</string>
+    <string name="history_audio_duration_loading">Recording duration: …</string>
+    <string name="history_audio_duration_unavailable">Recording duration unavailable</string>
     <string name="history_audio_play">Play audio</string>
     <string name="history_audio_stop">Stop audio</string>
+    <string name="history_audio_speed_1">1x</string>
+    <string name="history_audio_speed_15">1.5x</string>
+    <string name="history_audio_speed_2">2x</string>
+    <string name="history_audio_speed_selected">✓ %1$s</string>
+    <string name="history_audio_speed_accessibility">Playback speed %1$s</string>
+    <string name="history_audio_speed_selected_accessibility">Playback speed %1$s, selected</string>
+    <string name="history_audio_speed_error">Could not change playback speed.</string>
     <string name="history_audio_reprocess">Reprocess</string>
     <string name="history_audio_reprocess_progress_variant">In progress: %1$s…</string>
     <string name="history_audio_reprocess_cancel_accessibility">Cancel retry: %1$s</string>
@@ -186,7 +204,7 @@
     <string name="history_audio_reprocessing">Cancelling…</string>
     <string name="history_audio_unavailable">Audio unavailable</string>
     <string name="history_audio_reprocess_unavailable">Cannot reprocess: audio, model, or service unavailable.</string>
-    <string name="history_audio_reprocess_done">Transcript reprocessed and updated.</string>
+    <string name="history_audio_reprocess_done">Transcript reprocessed and updated in %1$s seconds.</string>
     <string name="history_audio_reprocess_failed">Reprocessing failed; the existing transcript was kept.</string>
     <string name="history_audio_reprocess_confirm">This will decode the saved recording again on-device with your currently selected model and replace this History transcript. No text or audio is sent to a server. The original audio is kept. Continue?</string>
     <string name="history_audio_reprocess_polish_warning">This will decode the saved recording again and replace this History transcript; the original audio is kept. AI polishing is enabled. If you continue, the configured system prompt, fixed input/output instructions, resulting transcript chunks, and your personal vocabulary (%3$d terms) will be sent as text to %1$s using model %2$s. Audio stays on this device. This retry will not be redirected if server settings change.</string>

@@ -31,6 +31,7 @@ import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
 class SpeechEngine private constructor(private val context: Context) {
     companion object {
@@ -43,8 +44,10 @@ class SpeechEngine private constructor(private val context: Context) {
         private const val CAPTURE_READ_SAMPLES = 1024
         // Batch PCM into 200 ms queue items; size the queue for the full bounded capture.
         private const val STREAM_CHUNK_SAMPLES = SAMPLE_RATE / 5
-        // The Fluid model card reports testing up to 30 seconds; split without VAD.
+        // The Fluid model card reports testing up to 30 seconds.
         private const val FLUID_CHUNK_SAMPLES = SAMPLE_RATE * 30
+        // The SM8750 QNN context has a fixed 1000-frame (10-second) encoder.
+        private const val FLUID_QNN_CHUNK_SAMPLES = SAMPLE_RATE * 10
         // NeMo's 1120 ms encoder needs a complete final chunk plus right context.
         // Padding is decoder-only; captured/history PCM is never modified.
         private const val NEMOTRON_LEFT_PADDING_SAMPLES = SAMPLE_RATE / 2
@@ -103,6 +106,8 @@ class SpeechEngine private constructor(private val context: Context) {
         var finalPolishingAutoNumberSequences: Boolean? = null
         var finalPolishingConfiguration: TranscriptPolishingConfiguration? = null
         @Volatile var stopDrainTimeout: Runnable? = null
+        @Volatile var vadActive = false
+        @Volatile var vadCaptureEnded = false
 
         @Synchronized fun closeAudioFile() { runCatching { audioFile?.close() } }
     }
@@ -158,11 +163,18 @@ class SpeechEngine private constructor(private val context: Context) {
     var onError: ((String) -> Unit)? = null
     /** Local live sessions only; called on main, with an empty string to clear. */
     var onPreviewTextChanged: ((String) -> Unit)? = null
+    /** Main-thread live Fluid VAD only: null means inactive or unavailable. */
+    var onVadStateChanged: ((Boolean?) -> Unit)? = null
+    var currentVadSpeaking: Boolean? = null
+        private set
 
-    /** Offline models do not provide interim hypotheses. */
+    /** Fluid uses repeated offline decodes, not a stateful streaming decoder. */
     val isStreamingPreviewSupported: Boolean
         get() = prefs.selectedModelId != AppPreferences.MODEL_MLKIT_ADVANCED &&
-            ModelInfo.getModelById(prefs.selectedModelId).streaming
+            supportsPreview(ModelInfo.getModelById(prefs.selectedModelId))
+
+    private fun supportsPreview(model: ModelInfo): Boolean = model.streaming ||
+        model.id == ModelInfo.FLUID_SPEECH_PRO.id || model.id == ModelInfo.FLUID_SPEECH_PRO_QNN.id
 
     fun isModelReady(): Boolean =
         prefs.selectedModelId != AppPreferences.MODEL_MLKIT_ADVANCED &&
@@ -232,7 +244,7 @@ class SpeechEngine private constructor(private val context: Context) {
         }
         current.previewEnabled = current.listener == null && current.owner == null &&
             !hasCompletedAudio && current.advancedLocale == null &&
-            ModelInfo.getModelById(selectedModelId).streaming && prefs.streamingPreviewEnabled
+            supportsPreview(ModelInfo.getModelById(selectedModelId)) && prefs.streamingPreviewEnabled
         current.decoderConfig = DecoderConfig(
             model = ModelInfo.getModelById(selectedModelId),
             threadCount = prefs.asrThreadCount.coerceIn(2, 4),
@@ -266,8 +278,7 @@ class SpeechEngine private constructor(private val context: Context) {
                         captured
                     } else if (!current.decoderConfig.model.streaming) {
                         val captured = withContext(Dispatchers.IO) {
-                            if (current.remotePcm) readRemotePcm(current) { }
-                            else captureRecording(current) { }
+                            captureFluidWithVad(current)
                         }
                         if (!current.cancelled && prefs.serviceEnabled && captured.isNotEmpty()) {
                             current.text = decodeFluid(captured, current)
@@ -415,6 +426,7 @@ class SpeechEngine private constructor(private val context: Context) {
             mainHandler.post {
                 if (session !== current) return@post
                 clearPreview(current)
+                clearVad(current)
                 session = null
                 sessionJob = null
                 isRecording = false
@@ -636,33 +648,73 @@ class SpeechEngine private constructor(private val context: Context) {
         }
     }
 
-    /** Full PCM is retained independently; boundaries are fixed, not voice-activity based. */
+    /** Called under nativeLock; preview and final decoding share one offline model. */
+    private fun initializeFluid(config: DecoderConfig) {
+        val useQnn = config.model.id == ModelInfo.FLUID_SPEECH_PRO_QNN.id
+        if (offlineRecognizer == null || loadedDecoderConfig != config) {
+            releaseNative()
+            val model = config.model
+            check(modelManager.isModelDownloaded(model)) { "Download the selected model in Settings." }
+            val dir = modelManager.getModelDir(model)
+            val encoder = File(dir, model.encoderFileName).absolutePath
+            val decoder = File(dir, model.decoderFileName).absolutePath
+            val joiner = File(dir, model.joinerFileName).absolutePath
+            var qnnTokens: File? = null
+            try {
+                val transducer = if (useQnn) {
+                    val nativeDir = File(context.applicationInfo.nativeLibraryDir)
+                    val backend = File(nativeDir, "libQnnHtp.so")
+                    val system = File(nativeDir, "libQnnSystem.so")
+                    check(backend.isFile && system.isFile &&
+                        File(nativeDir, "libQnnHtpPrepare.so").isFile &&
+                        File(nativeDir, "libQnnHtpV79Stub.so").isFile &&
+                        File(nativeDir, "libQnnHtpV79Skel.so").isFile) {
+                        "QNN native libraries are unavailable."
+                    }
+                    check(listOf(encoder, decoder, joiner).all { File(it).isFile && ',' !in it }) {
+                        "QNN model context binaries are unavailable."
+                    }
+                    // The pinned import has a space token at blank ID 8192, whereas
+                    // sherpa's Parakeet TDT QNN recognizer requires literal <blk>.
+                    // Derive a temporary table without changing the validated model.
+                    val source = File(dir, model.tokensFileName).readText(Charsets.UTF_8)
+                    val lines = source.lineSequence().toList().filter { it.isNotEmpty() }
+                    check(lines.size == 8193 && lines.last().trim() == "8192" &&
+                        lines.none { it.startsWith("<blk> ") }) { "Invalid QNN token table." }
+                    qnnTokens = File.createTempFile("fluid-qnn-tokens-", ".txt", context.cacheDir)
+                    qnnTokens.writeText(lines.dropLast(1).joinToString("\n", postfix = "\n<blk> 8192\n"), Charsets.UTF_8)
+                    OfflineRecognizer.prependAdspLibraryPath(nativeDir.absolutePath)
+                    OfflineTransducerModelConfig(qnnConfig = QnnConfig(
+                        backendLib = backend.absolutePath,
+                        systemLib = system.absolutePath,
+                        contextBinary = listOf(encoder, decoder, joiner).joinToString(",")
+                    ))
+                } else OfflineTransducerModelConfig(encoder = encoder, decoder = decoder, joiner = joiner)
+                offlineRecognizer = OfflineRecognizer(null, OfflineRecognizerConfig(
+                    featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 128, dither = 0f),
+                    modelConfig = OfflineModelConfig(
+                        transducer = transducer,
+                        tokens = qnnTokens?.absolutePath ?: File(dir, model.tokensFileName).absolutePath,
+                        modelType = "nemo_transducer",
+                        numThreads = config.threadCount,
+                        provider = if (useQnn) "qnn" else "cpu"
+                    )
+                ))
+            } finally {
+                qnnTokens?.delete()
+            }
+            loadedDecoderConfig = config
+        }
+    }
+
+    /** VAD only selects boundaries; every original sample goes to exactly one decoder chunk. */
     private suspend fun decodeFluid(samples: FloatArray, current: Session): String =
         withContext(Dispatchers.Default) {
             nativeLock.withLock {
                 if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
                 val config = current.decoderConfig
-                if (offlineRecognizer == null || loadedDecoderConfig != config) {
-                    releaseNative()
-                    val model = config.model
-                    check(modelManager.isModelDownloaded(model)) { "Download the selected model in Settings." }
-                    val dir = modelManager.getModelDir(model)
-                    offlineRecognizer = OfflineRecognizer(null, OfflineRecognizerConfig(
-                        featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 128, dither = 0f),
-                        modelConfig = OfflineModelConfig(
-                            transducer = OfflineTransducerModelConfig(
-                                encoder = File(dir, model.encoderFileName).absolutePath,
-                                decoder = File(dir, model.decoderFileName).absolutePath,
-                                joiner = File(dir, model.joinerFileName).absolutePath
-                            ),
-                            tokens = File(dir, model.tokensFileName).absolutePath,
-                            modelType = "nemo_transducer",
-                            numThreads = config.threadCount,
-                            provider = "cpu"
-                        )
-                    ))
-                    loadedDecoderConfig = config
-                }
+                val useQnn = config.model.id == ModelInfo.FLUID_SPEECH_PRO_QNN.id
+                initializeFluid(config)
                 if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
                 withContext(Dispatchers.Main) {
                     if (!current.cancelled) setState(false, true, "processing")
@@ -670,9 +722,18 @@ class SpeechEngine private constructor(private val context: Context) {
                 val engine = checkNotNull(offlineRecognizer)
                 val parts = mutableListOf<String>()
                 var offset = 0
-                while (offset < samples.size) {
+                val chunkSamples = if (useQnn) FLUID_QNN_CHUNK_SAMPLES else FLUID_CHUNK_SAMPLES
+                val ends = try {
+                    FluidVad.boundaries(samples, chunkSamples, context) { current.cancelled || !prefs.serviceEnabled }
+                } catch (e: Exception) {
+                    Log.w(TAG, "VAD unavailable; using fixed Fluid chunks")
+                    fixedFluidBoundaries(samples.size, chunkSamples)
+                } catch (e: LinkageError) {
+                    Log.w(TAG, "VAD unavailable; using fixed Fluid chunks")
+                    fixedFluidBoundaries(samples.size, chunkSamples)
+                }
+                for (end in ends) {
                     if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
-                    val end = minOf(offset + FLUID_CHUNK_SAMPLES, samples.size)
                     val stream = engine.createStream()
                     try {
                         stream.acceptWaveform(samples.copyOfRange(offset, end), SAMPLE_RATE)
@@ -687,6 +748,186 @@ class SpeechEngine private constructor(private val context: Context) {
                 parts.joinToString(" ")
             }
         }
+
+    private fun fixedFluidBoundaries(size: Int, maximum: Int): List<Int> {
+        val ends = mutableListOf<Int>()
+        var end = 0
+        while (end < size) {
+            end = minOf(end + maximum, size)
+            ends.add(end)
+        }
+        return ends
+    }
+
+    /** Both microphone and remote PCM only enqueue blocks; VAD and ASR never block input. */
+    private suspend fun captureFluidWithVad(current: Session): FloatArray = coroutineScope {
+        // Drop the indicator, not audio, if inference falls materially behind capture.
+        val chunks = Channel<ShortArray>(5)
+        val preview = if (current.previewEnabled || current.remotePcm) try {
+            FluidPreview(
+                STREAM_CHUNK_SAMPLES,
+                if (current.remotePcm) (MAX_REMOTE_PCM_BYTES / 2).toInt() else MAX_LIVE_SAMPLES,
+                if (current.decoderConfig.model.id == ModelInfo.FLUID_SPEECH_PRO_QNN.id)
+                    FLUID_QNN_CHUNK_SAMPLES else FLUID_CHUNK_SAMPLES,
+                SAMPLE_RATE * 2
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Fluid preview unavailable")
+            null
+        } catch (e: LinkageError) {
+            Log.w(TAG, "Fluid preview unavailable")
+            null
+        } else null
+        val previewInputAvailable = AtomicBoolean(true)
+        fun previewActive() = previewInputAvailable.get() && !current.stopped && !current.cancelled &&
+            !current.vadCaptureEnded && (!current.remotePcm || !current.remoteInputEnded) && prefs.serviceEnabled
+        // Loading and all preview JNI calls are off the capture thread. Stop joins this
+        // worker, so a native call already in progress drains before the final pass.
+        val previewWorker = preview?.let { controller ->
+            launch(Dispatchers.Default) {
+                try {
+                    nativeLock.withLock {
+                        if (previewActive()) initializeFluid(current.decoderConfig)
+                    }
+                    var lastRemotePreview = ""
+                    var lastRemotePreviewTime = 0L
+                    if (previewActive()) controller.run(::previewActive, { pcm ->
+                        nativeLock.withLock {
+                            if (!previewActive()) return@withLock ""
+                            val engine = checkNotNull(offlineRecognizer)
+                            val stream = engine.createStream()
+                            try {
+                                stream.acceptWaveform(pcm, SAMPLE_RATE)
+                                engine.decode(stream)
+                                if (previewActive()) engine.getResult(stream).text else ""
+                            } finally {
+                                stream.release()
+                            }
+                        }
+                    }, { text ->
+                        if (current.remotePcm) {
+                            val now = SystemClock.elapsedRealtime()
+                            if (text.length <= MAX_REMOTE_PREVIEW_CHARS && text != lastRemotePreview &&
+                                now - lastRemotePreviewTime >= 250L) {
+                                lastRemotePreview = text
+                                lastRemotePreviewTime = now
+                                postRemotePreview(current, text)
+                            }
+                        } else postPreview(current, text)
+                    })
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Fluid preview unavailable")
+                } catch (e: LinkageError) {
+                    Log.w(TAG, "Fluid preview unavailable")
+                }
+            }
+        }
+        current.vadActive = true
+        val worker = launch(Dispatchers.Default) {
+            try {
+                FluidVad.open(context).use { detector ->
+                    val frame = FloatArray(FluidVad.WINDOW)
+                    var used = 0
+                    var frameEnd = 0
+                    var last: Boolean? = null
+                    for (chunk in chunks) {
+                        if (!current.vadActive || !previewActive()) break
+                        for (sample in chunk) {
+                            frame[used++] = sample / 32768f
+                            if (used == frame.size) {
+                                val speaking = detector.compute(frame).second
+                                used = 0
+                                frameEnd += frame.size
+                                if (!current.vadActive || !previewActive()) break
+                                if (last != speaking) {
+                                    last = speaking
+                                    preview?.vadState(speaking, frameEnd)
+                                    if (!current.remotePcm) postVad(current, speaking)
+                                }
+                                if (!current.vadActive || !previewActive()) break
+                            }
+                        }
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                current.vadActive = false
+                preview?.vadUnavailable()
+                if (!current.remotePcm) postVadUnavailable(current)
+            } catch (e: LinkageError) {
+                current.vadActive = false
+                preview?.vadUnavailable()
+                if (!current.remotePcm) postVadUnavailable(current)
+            }
+        }
+        // A preview-only failure must never abort or corrupt the authoritative input.
+        val acceptChunk: suspend (ShortArray) -> Unit = { chunk ->
+            if (previewActive()) {
+                try {
+                    preview?.append(chunk)
+                    if (current.vadActive && chunks.trySend(chunk).isFailure) {
+                        current.vadActive = false
+                        preview?.vadUnavailable()
+                        if (!current.remotePcm) postVadUnavailable(current)
+                    }
+                } catch (e: Exception) {
+                    previewInputAvailable.set(false)
+                    current.vadActive = false
+                    preview?.close()
+                    if (!current.remotePcm) postVadUnavailable(current)
+                    Log.w(TAG, "Fluid preview input unavailable")
+                } catch (e: LinkageError) {
+                    previewInputAvailable.set(false)
+                    current.vadActive = false
+                    preview?.close()
+                    if (!current.remotePcm) postVadUnavailable(current)
+                    Log.w(TAG, "Fluid preview input unavailable")
+                }
+            }
+        }
+        try {
+            if (current.remotePcm) readRemotePcm(current, acceptChunk)
+            else captureRecording(current, acceptChunk)
+        } finally {
+            current.vadActive = false
+            current.vadCaptureEnded = true
+            if (!current.remotePcm) postVadUnavailable(current)
+            chunks.close()
+            preview?.close()
+            withContext(NonCancellable) {
+                worker.join()
+                previewWorker?.join()
+            }
+        }
+    }
+
+    private fun postVad(current: Session, speaking: Boolean) {
+        mainHandler.post {
+            if (session === current && current.vadActive && !current.vadCaptureEnded &&
+                !current.stopped && !current.cancelled && prefs.serviceEnabled && currentStatus == "recording") {
+                setVad(speaking)
+            }
+        }
+    }
+
+    private fun postVadUnavailable(current: Session) {
+        mainHandler.post { if (session === current && (!current.vadActive || current.vadCaptureEnded)) setVad(null) }
+    }
+
+    private fun setVad(value: Boolean?) {
+        if (currentVadSpeaking != value) {
+            currentVadSpeaking = value
+            onVadStateChanged?.invoke(value)
+        }
+    }
+
+    private fun clearVad(current: Session) {
+        current.vadActive = false
+        setVad(null)
+    }
 
     /** Keep raw PCM capture separate from the streaming decoder. */
     private suspend fun captureAndTranscribeStreaming(current: Session): StreamingCaptureResult =
@@ -949,6 +1190,9 @@ class SpeechEngine private constructor(private val context: Context) {
             }
         } finally {
             // Release the microphone BEFORE waiting at the cap or initializing native ASR.
+            current.vadCaptureEnded = true
+            current.vadActive = false
+            postVadUnavailable(current)
             synchronized(recorderLock) {
                 if (recorder === audio) recorder = null
                 try {
@@ -1075,7 +1319,8 @@ class SpeechEngine private constructor(private val context: Context) {
     private fun postPreview(current: Session, text: String) {
         mainHandler.post {
             if (session === current && current.previewEnabled && !current.stopped &&
-                !current.cancelled && prefs.serviceEnabled && current.publishedPreview != text) {
+                !current.cancelled && prefs.serviceEnabled &&
+                (current.decoderConfig.model.streaming || !current.vadCaptureEnded) && current.publishedPreview != text) {
                 current.publishedPreview = text
                 onPreviewTextChanged?.invoke(text)
             }
@@ -1090,6 +1335,7 @@ class SpeechEngine private constructor(private val context: Context) {
     }
 
     private fun stopSession(current: Session) {
+        clearVad(current)
         if (current.cancelled) {
             current.closeAudioFile()
             current.remoteFinish.complete(null)

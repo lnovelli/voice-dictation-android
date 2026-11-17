@@ -104,6 +104,12 @@ class OverlayManager(private val context: Context) {
             }
         }
 
+        // Read the current state when notified so an older queued notification cannot
+        // restore a speaking indicator after capture has stopped.
+        speechEngine.onVadStateChanged = {
+            overlayView?.let { updateIconTint(it) }
+        }
+
         speechEngine.onRecordingLimit = {
             val message = "10-minute limit reached. Tap Stop to transcribe, or hold to discard."
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
@@ -606,6 +612,25 @@ class OverlayManager(private val context: Context) {
         }
     }
 
+    private fun updateIconTint(root: View) {
+        val icon = root.findViewById<ImageView>(R.id.ivOverlayIcon) ?: return
+        val color = if (speechEngine.isRecording && !speechEngine.isProcessing &&
+            !speechEngine.isExternalSessionActive) {
+            when (speechEngine.currentVadSpeaking) {
+                true -> R.color.recording_red
+                false -> R.color.overlay_no_speech
+                null -> android.R.color.white
+            }
+        } else android.R.color.white
+        icon.imageTintList = context.getColorStateList(color)
+        if (speechEngine.isRecording && !speechEngine.isProcessing && !speechEngine.isExternalSessionActive) {
+            // Preserve the usual red recording button when VAD is inactive or unavailable.
+            root.findViewById<FrameLayout>(R.id.btnOverlayCircle)?.setBackgroundResource(
+                if (speechEngine.currentVadSpeaking == null) R.drawable.bg_overlay_recording else R.drawable.bg_overlay_idle
+            )
+        }
+    }
+
     private fun updateOverlayVisuals(isRecording: Boolean, isProcessing: Boolean) {
         val root = overlayView ?: return
         val externalSession = speechEngine.isExternalSessionActive
@@ -632,7 +657,7 @@ class OverlayManager(private val context: Context) {
         val ivIcon = root.findViewById<ImageView>(R.id.ivOverlayIcon) ?: return
         val pbProcessing = root.findViewById<ProgressBar>(R.id.pbOverlayProcessing) ?: return
         val pulseRing = root.findViewById<View>(R.id.pulseRing) ?: return
-        ivIcon.imageTintList = context.getColorStateList(android.R.color.white)
+        updateIconTint(root)
         pbProcessing.indeterminateTintList = context.getColorStateList(
             if (speechEngine.currentStatus == "polishing") R.color.success else R.color.accent
         )
@@ -651,7 +676,11 @@ class OverlayManager(private val context: Context) {
             ivIcon.visibility = View.VISIBLE
             ivIcon.setImageResource(if (externalSession) R.drawable.ic_mic else R.drawable.ic_stop)
             val recordingBackground = R.drawable.bg_overlay_recording
-            btnCircle.setBackgroundResource(recordingBackground)
+            // The dark button keeps VAD colors visible; otherwise retain the usual red.
+            btnCircle.setBackgroundResource(
+                if (!externalSession && speechEngine.currentVadSpeaking != null) R.drawable.bg_overlay_idle
+                else recordingBackground
+            )
             pulseRing.setBackgroundResource(recordingBackground)
             root.alpha = 1.0f
 
