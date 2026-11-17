@@ -37,6 +37,7 @@ import com.ludo.voicedictation.accessibility.DictationAccessibilityService
 import com.ludo.voicedictation.accessibility.OverlayDiagnostics
 import com.ludo.voicedictation.asr.SpeechEngine
 import com.ludo.voicedictation.asr.AdvancedSpeechModel
+import com.ludo.voicedictation.asr.NemotronLanguages
 import com.ludo.voicedictation.asr.RecognitionDiagnostics
 import com.ludo.voicedictation.data.AppPreferences
 import com.ludo.voicedictation.databinding.TabSettingsBinding
@@ -255,6 +256,26 @@ class SettingsFragment : Fragment() {
                 prefs.streamingPreviewEnabled = checked
             }
         }
+        val nemotronTags = listOf(NemotronLanguages.AUTO) + NemotronLanguages.locales
+        val nemotronLabels = nemotronTags.map { tag ->
+            if (tag == NemotronLanguages.AUTO) getString(R.string.nemotron_language_auto)
+            else {
+                val name = Locale.forLanguageTag(tag).getDisplayName(Locale.getDefault())
+                val quality = if (tag in NemotronLanguages.broadCoverage) ", ${getString(R.string.nemotron_language_broad)}" else ""
+                "$name ($tag$quality)"
+            }
+        }
+        binding.spinnerNemotronLanguage.adapter = ArrayAdapter(
+            requireContext(), android.R.layout.simple_spinner_item, nemotronLabels
+        ).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        binding.spinnerNemotronLanguage.setSelection(nemotronTags.indexOf(prefs.nemotronLanguage).coerceAtLeast(0))
+        binding.spinnerNemotronLanguage.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val tag = nemotronTags[position]
+                if (prefs.nemotronLanguage != tag) prefs.nemotronLanguage = tag
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
         val labels = mlkitLocaleTags.map { tag ->
             val locale = Locale.forLanguageTag(tag)
             val beta = tag in setOf("ar-SA", "da-DK", "hi-IN", "id-ID", "nl-NL", "pl-PL", "sv-SE", "tr-TR", "vi-VN")
@@ -277,6 +298,7 @@ class SettingsFragment : Fragment() {
         }
         binding.modelVariants.check(when (prefs.selectedModelId) {
             AppPreferences.MODEL_NEMOTRON_STREAMING_560MS -> R.id.model560ms
+            AppPreferences.MODEL_FLUID_SPEECH_PRO -> R.id.modelFluidSpeechPro
             AppPreferences.MODEL_MLKIT_ADVANCED -> R.id.modelMlkitAdvanced
             else -> R.id.model1120ms
         })
@@ -284,6 +306,7 @@ class SettingsFragment : Fragment() {
             val selected = when (checkedId) {
                 R.id.model560ms -> AppPreferences.MODEL_NEMOTRON_STREAMING_560MS
                 R.id.model1120ms -> AppPreferences.MODEL_NEMOTRON_STREAMING
+                R.id.modelFluidSpeechPro -> AppPreferences.MODEL_FLUID_SPEECH_PRO
                 R.id.modelMlkitAdvanced -> AppPreferences.MODEL_MLKIT_ADVANCED
                 else -> return@setOnCheckedChangeListener
             }
@@ -378,6 +401,11 @@ class SettingsFragment : Fragment() {
         binding.switchStreamingPreview.isEnabled = supportsPreview
         binding.tvStreamingPreviewError.visibility = if (supportsPreview) View.GONE else View.VISIBLE
         val isMlkit = prefs.selectedModelId == AppPreferences.MODEL_MLKIT_ADVANCED
+        val isNemotron = prefs.selectedModelId == AppPreferences.MODEL_NEMOTRON_STREAMING ||
+            prefs.selectedModelId == AppPreferences.MODEL_NEMOTRON_STREAMING_560MS
+        binding.tvNemotronLanguageLabel.visibility = if (isNemotron) View.VISIBLE else View.GONE
+        binding.spinnerNemotronLanguage.visibility = if (isNemotron) View.VISIBLE else View.GONE
+        binding.tvNemotronLanguageHint.visibility = if (isNemotron) View.VISIBLE else View.GONE
         binding.sliderAsrThreads.isEnabled = !isMlkit
         binding.tvAsrThreadsLabel.isEnabled = !isMlkit
         binding.tvMlkitLocaleLabel.visibility = if (isMlkit) View.VISIBLE else View.GONE
@@ -528,6 +556,7 @@ class SettingsFragment : Fragment() {
         isDownloading = true
         binding.model560ms.isEnabled = false
         binding.model1120ms.isEnabled = false
+        binding.modelFluidSpeechPro.isEnabled = false
         binding.modelMlkitAdvanced.isEnabled = false
         binding.btnDownloadModel.isEnabled = false
         binding.layoutDownloadProgress.visibility = View.VISIBLE
@@ -548,6 +577,7 @@ class SettingsFragment : Fragment() {
                 isDownloading = false
                 binding.model560ms.isEnabled = true
                 binding.model1120ms.isEnabled = true
+                binding.modelFluidSpeechPro.isEnabled = true
                 binding.layoutDownloadProgress.visibility = View.GONE
 
                 if (result.isSuccess) {

@@ -2,6 +2,7 @@ package com.ludo.voicedictation.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.ludo.voicedictation.asr.NemotronLanguages
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -32,6 +33,7 @@ class AppPreferences(context: Context) {
         private const val PREFS_NAME = "voice_dictation_prefs"
         private const val KEY_SELECTED_MODEL = "selected_model"
         private const val KEY_MLKIT_LOCALE = "mlkit_locale_tag"
+        private const val KEY_NEMOTRON_LANGUAGE = "nemotron_language"
         private const val KEY_STREAMING_PREVIEW = "streaming_preview_enabled"
         private const val KEY_ASR_THREAD_COUNT = "asr_thread_count"
         private const val KEY_PREFERRED_MICROPHONE = "preferred_microphone_v1"
@@ -71,6 +73,7 @@ class AppPreferences(context: Context) {
 
         const val MODEL_NEMOTRON_STREAMING = "nemotron_3_5_streaming"
         const val MODEL_NEMOTRON_STREAMING_560MS = "nemotron_3_5_streaming_560ms"
+        const val MODEL_FLUID_SPEECH_PRO = "fluid_speech_pro"
         const val MODEL_MLKIT_ADVANCED = "mlkit_genai_advanced"
     }
 
@@ -121,7 +124,7 @@ class AppPreferences(context: Context) {
         get() {
             val selected = prefs.getString(KEY_SELECTED_MODEL, MODEL_NEMOTRON_STREAMING) ?: MODEL_NEMOTRON_STREAMING
             if (selected != MODEL_NEMOTRON_STREAMING && selected != MODEL_NEMOTRON_STREAMING_560MS &&
-                selected != MODEL_MLKIT_ADVANCED) {
+                selected != MODEL_MLKIT_ADVANCED && selected != MODEL_FLUID_SPEECH_PRO) {
                 prefs.edit().putString(KEY_SELECTED_MODEL, MODEL_NEMOTRON_STREAMING).apply()
                 return MODEL_NEMOTRON_STREAMING
             }
@@ -138,6 +141,15 @@ class AppPreferences(context: Context) {
     var mlKitLocaleTag: String
         get() = prefs.getString(KEY_MLKIT_LOCALE, "en-US") ?: "en-US"
         set(value) = prefs.edit().putString(KEY_MLKIT_LOCALE, value).apply()
+
+    /** Independent of ML Kit's explicit locale; snapshotted for each Nemotron stream. */
+    var nemotronLanguage: String
+        get() = prefs.getString(KEY_NEMOTRON_LANGUAGE, NemotronLanguages.AUTO)
+            ?.takeIf(NemotronLanguages::isValid) ?: NemotronLanguages.AUTO
+        set(value) {
+            require(NemotronLanguages.isValid(value))
+            prefs.edit().putString(KEY_NEMOTRON_LANGUAGE, value).apply()
+        }
 
     /** Recognizer threads for subsequent recognition sessions. */
     var asrThreadCount: Int

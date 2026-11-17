@@ -3,6 +3,7 @@ package com.ludo.voicedictation.data
 import android.content.SharedPreferences
 import android.util.JsonReader
 import android.util.JsonToken
+import com.ludo.voicedictation.asr.NemotronLanguages
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.StringReader
@@ -24,7 +25,7 @@ internal object SettingsBackup {
         "overlay_x_portrait", "overlay_y_portrait", "overlay_x_landscape", "overlay_y_landscape"
     )
     private val strings = setOf(
-        "selected_model", "mlkit_locale_tag", "preferred_microphone_v1", "transcript_removal_words",
+        "selected_model", "mlkit_locale_tag", "nemotron_language", "preferred_microphone_v1", "transcript_removal_words",
         "transcript_polishing_endpoint", "transcript_polishing_model", "transcript_polishing_system_prompt"
     )
     private val settingsKeys = booleans + ints + strings + setOf(
@@ -122,8 +123,10 @@ internal object SettingsBackup {
             val text = value as? String ?: invalid()
             val valid = when (key) {
                 "selected_model" -> text in setOf(AppPreferences.MODEL_NEMOTRON_STREAMING,
-                    AppPreferences.MODEL_NEMOTRON_STREAMING_560MS, AppPreferences.MODEL_MLKIT_ADVANCED)
+                    AppPreferences.MODEL_NEMOTRON_STREAMING_560MS, AppPreferences.MODEL_MLKIT_ADVANCED,
+                    AppPreferences.MODEL_FLUID_SPEECH_PRO)
                 "mlkit_locale_tag" -> text in locales
+                "nemotron_language" -> NemotronLanguages.isValid(text)
                 "preferred_microphone_v1" -> text.matches(Regex("[0-9a-f]{64}"))
                 "transcript_polishing_endpoint" -> text.length <= 2048
                 "transcript_polishing_model" -> text.length in 1..128

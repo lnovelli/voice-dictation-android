@@ -41,6 +41,11 @@ class ModelManager(private val context: Context) {
 
     private fun hasModelFiles(model: ModelInfo, dir: File): Boolean {
         if (!dir.exists() || !dir.isDirectory) return false
+        if (model.directFiles.isNotEmpty()) {
+            return model.directFiles.all { spec ->
+                File(dir, spec.name).let { it.isFile && it.length() == spec.size }
+            }
+        }
         val enc = File(dir, model.encoderFileName)
         val dec = File(dir, model.decoderFileName)
         val joiner = File(dir, model.joinerFileName)
@@ -64,20 +69,41 @@ class ModelManager(private val context: Context) {
             val workDir = File(modelsDir, ".model-install-${UUID.randomUUID()}")
             check(workDir.mkdir()) { "Could not create model staging directory" }
             staging = workDir
-            val archiveFile = File(workDir, "archive.tar.bz2")
-
-            onProgress("Downloading ${model.displayName}...", 10)
-            downloadFileWithRedirects(model.archiveUrl, archiveFile, model.archiveSha256, { jobContext.ensureActive() }) { currentBytes, totalBytes ->
-                val pct = if (totalBytes > 0) {
-                    10 + ((currentBytes * 75) / totalBytes).toInt()
-                } else 10
-                onProgress("Downloading ${model.displayName}...", pct)
-            }
-
-            onProgress("Extracting model archive...", 88)
             val stagedModel = File(workDir, "model")
             check(stagedModel.mkdir()) { "Could not create model staging directory" }
-            extractTarBz2(archiveFile, stagedModel, model) { jobContext.ensureActive() }
+            onProgress("Downloading ${model.displayName}...", 10)
+            if (model.directFiles.isNotEmpty()) {
+                val names = model.directFiles.map { it.name }
+                check(names.toSet().size == names.size && names.all {
+                    it.isNotEmpty() && File(it).name == it && it != "." && it != ".."
+                }) { "Invalid model file catalog" }
+                check(setOf(model.encoderFileName, model.decoderFileName, model.joinerFileName,
+                    model.tokensFileName).all { it in names }) { "Incomplete model file catalog" }
+                val totalBytes = model.directFiles.sumOf { it.size }
+                check(totalBytes > 0 && model.directFiles.all {
+                    it.size > 0 && it.sha256.matches(Regex("[0-9a-f]{64}"))
+                }) { "Invalid model file metadata" }
+                var completed = 0L
+                for (spec in model.directFiles) {
+                    jobContext.ensureActive()
+                    downloadFileWithRedirects(model.archiveUrl + spec.name, File(stagedModel, spec.name),
+                        spec.sha256, { jobContext.ensureActive() }, spec.size) { current, _ ->
+                        val pct = 10 + (((completed + current) * 80) / totalBytes).toInt()
+                        onProgress("Downloading ${model.displayName}...", pct)
+                    }
+                    completed += spec.size
+                }
+            } else {
+                val archiveFile = File(workDir, "archive.tar.bz2")
+                downloadFileWithRedirects(model.archiveUrl, archiveFile, model.archiveSha256, { jobContext.ensureActive() }) { currentBytes, totalBytes ->
+                    val pct = if (totalBytes > 0) {
+                        10 + ((currentBytes * 75) / totalBytes).toInt()
+                    } else 10
+                    onProgress("Downloading ${model.displayName}...", pct)
+                }
+                onProgress("Extracting model archive...", 88)
+                extractTarBz2(archiveFile, stagedModel, model) { jobContext.ensureActive() }
+            }
             check(hasModelFiles(model, stagedModel)) { "Model extraction verification failed" }
             jobContext.ensureActive()
 
@@ -119,11 +145,15 @@ class ModelManager(private val context: Context) {
         var redirects = 0
         while (redirects < 8) {
             val url = URL(currentUrl)
+            check(url.protocol.equals("https", ignoreCase = true) && url.host.isNotEmpty() && url.userInfo == null) {
+                "Model download requires HTTPS"
+            }
             val conn = url.openConnection() as HttpURLConnection
             conn.instanceFollowRedirects = false
             conn.connectTimeout = 15000
             conn.readTimeout = 30000
             conn.setRequestProperty("User-Agent", "VoiceDictation-Android")
+            conn.setRequestProperty("Accept-Encoding", "identity")
 
             val status = conn.responseCode
             if (status == HttpURLConnection.HTTP_MOVED_TEMP ||
@@ -134,7 +164,7 @@ class ModelManager(private val context: Context) {
                 val newUrl = conn.getHeaderField("Location")
                 conn.disconnect()
                 if (newUrl == null) throw Exception("Redirect without Location header")
-                currentUrl = newUrl
+                currentUrl = URL(url, newUrl).toExternalForm()
                 redirects++
                 continue
             }
@@ -148,14 +178,18 @@ class ModelManager(private val context: Context) {
         destFile: File,
         expectedSha256: String?,
         checkCancelled: () -> Unit,
+        expectedSize: Long? = null,
         onProgress: (current: Long, total: Long) -> Unit
     ) {
         val conn = openConnectionWithRedirects(urlStr)
         try {
-            if (conn.responseCode !in 200..299) {
+            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
                 throw Exception("HTTP ${conn.responseCode} while downloading from $urlStr")
             }
             val contentLength = conn.contentLengthLong
+            check(expectedSize == null || contentLength < 0 || contentLength == expectedSize) {
+                "Unexpected model file size"
+            }
             val digest = expectedSha256?.let { MessageDigest.getInstance("SHA-256") }
             var totalRead = 0L
             conn.inputStream.use { input ->
@@ -166,6 +200,7 @@ class ModelManager(private val context: Context) {
 
                 while (input.read(buffer).also { bytesRead = it } != -1) {
                     checkCancelled()
+                    check(expectedSize == null || totalRead + bytesRead <= expectedSize) { "Model file is too large" }
                     output.write(buffer, 0, bytesRead)
                     digest?.update(buffer, 0, bytesRead)
                     totalRead += bytesRead
@@ -179,9 +214,11 @@ class ModelManager(private val context: Context) {
               }
             }
             check(contentLength < 0 || totalRead == contentLength) { "Incomplete model download" }
+            check(expectedSize == null || totalRead == expectedSize) { "Incomplete model download" }
+            checkCancelled()
             if (digest != null) {
                 val actual = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
-                check(actual.equals(expectedSha256, ignoreCase = true)) { "Model archive checksum mismatch" }
+                check(actual.equals(expectedSha256, ignoreCase = true)) { "Model checksum mismatch" }
             }
         } finally {
             conn.disconnect()

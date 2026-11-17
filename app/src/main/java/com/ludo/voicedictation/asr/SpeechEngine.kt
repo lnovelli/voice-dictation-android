@@ -43,6 +43,8 @@ class SpeechEngine private constructor(private val context: Context) {
         private const val CAPTURE_READ_SAMPLES = 1024
         // Batch PCM into 200 ms queue items; size the queue for the full bounded capture.
         private const val STREAM_CHUNK_SAMPLES = SAMPLE_RATE / 5
+        // The Fluid model card reports testing up to 30 seconds; split without VAD.
+        private const val FLUID_CHUNK_SAMPLES = SAMPLE_RATE * 30
         // NeMo's 1120 ms encoder needs a complete final chunk plus right context.
         // Padding is decoder-only; captured/history PCM is never modified.
         private const val NEMOTRON_LEFT_PADDING_SAMPLES = SAMPLE_RATE / 2
@@ -76,6 +78,7 @@ class SpeechEngine private constructor(private val context: Context) {
         val historyPolishingConfiguration: TranscriptPolishingConfiguration? = null
     ) {
         var preferredMicrophone: String? = null
+        var nemotronLanguage: String = NemotronLanguages.AUTO
         lateinit var decoderConfig: DecoderConfig
         var advancedLocale: Locale? = null
         var previewEnabled = false
@@ -128,6 +131,7 @@ class SpeechEngine private constructor(private val context: Context) {
     private val nativeLock = Mutex()
     private val recorderLock = Any()
     private var onlineRecognizer: OnlineRecognizer? = null
+    private var offlineRecognizer: OfflineRecognizer? = null
     private var loadedDecoderConfig: DecoderConfig? = null
     private var spellingHints = RecognitionPolicy.SpellingHints(emptySet())
     private var transcriptFilter = TranscriptFilter(emptyList())
@@ -155,9 +159,10 @@ class SpeechEngine private constructor(private val context: Context) {
     /** Local live sessions only; called on main, with an empty string to clear. */
     var onPreviewTextChanged: ((String) -> Unit)? = null
 
-    /** ML Kit currently uses the completed-audio, one-shot path. */
+    /** Offline models do not provide interim hypotheses. */
     val isStreamingPreviewSupported: Boolean
-        get() = prefs.selectedModelId != AppPreferences.MODEL_MLKIT_ADVANCED
+        get() = prefs.selectedModelId != AppPreferences.MODEL_MLKIT_ADVANCED &&
+            ModelInfo.getModelById(prefs.selectedModelId).streaming
 
     fun isModelReady(): Boolean =
         prefs.selectedModelId != AppPreferences.MODEL_MLKIT_ADVANCED &&
@@ -226,7 +231,8 @@ class SpeechEngine private constructor(private val context: Context) {
             RecognitionDiagnostics.record(if (hasCompletedAudio) "file" else "live", "started")
         }
         current.previewEnabled = current.listener == null && current.owner == null &&
-            !hasCompletedAudio && current.advancedLocale == null && prefs.streamingPreviewEnabled
+            !hasCompletedAudio && current.advancedLocale == null &&
+            ModelInfo.getModelById(selectedModelId).streaming && prefs.streamingPreviewEnabled
         current.decoderConfig = DecoderConfig(
             model = ModelInfo.getModelById(selectedModelId),
             threadCount = prefs.asrThreadCount.coerceIn(2, 4),
@@ -235,6 +241,7 @@ class SpeechEngine private constructor(private val context: Context) {
             hotwordsScore = prefs.acousticHotwordsScore
         )
         current.preferredMicrophone = prefs.preferredMicrophone
+        current.nemotronLanguage = prefs.nemotronLanguage
         session = current
         // Keep the control active during mic startup, but expose a distinct not-yet-recording state.
         setState(!hasCompletedAudio, true, if (hasCompletedAudio) "loading" else "starting")
@@ -244,12 +251,26 @@ class SpeechEngine private constructor(private val context: Context) {
                 current.advancedLocale?.let { locale ->
                     withAdvancedJob(current) { AdvancedSpeechModel(locale).use { it.requireAvailable() } }
                 }
+                if (current.advancedLocale == null && !current.decoderConfig.model.streaming) {
+                    check(modelManager.isModelDownloaded(current.decoderConfig.model)) {
+                        "Download the selected model in Settings."
+                    }
+                }
                 val samples = if (!hasCompletedAudio) {
                     if (current.advancedLocale != null) {
                         val captured = withContext(Dispatchers.IO) { captureRecording(current) { } }
                         if (!current.cancelled) RecognitionDiagnostics.record("input", if (captured.isEmpty()) "empty_input" else "ready")
                         if (!current.cancelled && prefs.serviceEnabled && captured.isNotEmpty()) {
                             current.text = decodeAdvanced(captured, current)
+                        }
+                        captured
+                    } else if (!current.decoderConfig.model.streaming) {
+                        val captured = withContext(Dispatchers.IO) {
+                            if (current.remotePcm) readRemotePcm(current) { }
+                            else captureRecording(current) { }
+                        }
+                        if (!current.cancelled && prefs.serviceEnabled && captured.isNotEmpty()) {
+                            current.text = decodeFluid(captured, current)
                         }
                         captured
                     } else {
@@ -270,6 +291,9 @@ class SpeechEngine private constructor(private val context: Context) {
                         current.text = if (current.advancedLocale != null) {
                             snapshotFinalizationSettings(current)
                             decodeAdvanced(completedSamples, current)
+                        } else if (!current.decoderConfig.model.streaming) {
+                            snapshotFinalizationSettings(current)
+                            decodeFluid(completedSamples, current)
                         } else {
                             withContext(Dispatchers.Default) {
                                 nativeLock.withLock {
@@ -475,7 +499,7 @@ class SpeechEngine private constructor(private val context: Context) {
 
         releaseNative()
         val model = config.model
-        check(modelManager.isModelDownloaded(model)) { "Download the Nemotron model in Settings." }
+        check(modelManager.isModelDownloaded(model)) { "Download the selected model in Settings." }
         val dir = modelManager.getModelDir(model)
         val tokensFile = File(dir, model.tokensFileName)
         var bpeFile: File? = null
@@ -612,6 +636,58 @@ class SpeechEngine private constructor(private val context: Context) {
         }
     }
 
+    /** Full PCM is retained independently; boundaries are fixed, not voice-activity based. */
+    private suspend fun decodeFluid(samples: FloatArray, current: Session): String =
+        withContext(Dispatchers.Default) {
+            nativeLock.withLock {
+                if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
+                val config = current.decoderConfig
+                if (offlineRecognizer == null || loadedDecoderConfig != config) {
+                    releaseNative()
+                    val model = config.model
+                    check(modelManager.isModelDownloaded(model)) { "Download the selected model in Settings." }
+                    val dir = modelManager.getModelDir(model)
+                    offlineRecognizer = OfflineRecognizer(null, OfflineRecognizerConfig(
+                        featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 128, dither = 0f),
+                        modelConfig = OfflineModelConfig(
+                            transducer = OfflineTransducerModelConfig(
+                                encoder = File(dir, model.encoderFileName).absolutePath,
+                                decoder = File(dir, model.decoderFileName).absolutePath,
+                                joiner = File(dir, model.joinerFileName).absolutePath
+                            ),
+                            tokens = File(dir, model.tokensFileName).absolutePath,
+                            modelType = "nemo_transducer",
+                            numThreads = config.threadCount,
+                            provider = "cpu"
+                        )
+                    ))
+                    loadedDecoderConfig = config
+                }
+                if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
+                withContext(Dispatchers.Main) {
+                    if (!current.cancelled) setState(false, true, "processing")
+                }
+                val engine = checkNotNull(offlineRecognizer)
+                val parts = mutableListOf<String>()
+                var offset = 0
+                while (offset < samples.size) {
+                    if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
+                    val end = minOf(offset + FLUID_CHUNK_SAMPLES, samples.size)
+                    val stream = engine.createStream()
+                    try {
+                        stream.acceptWaveform(samples.copyOfRange(offset, end), SAMPLE_RATE)
+                        engine.decode(stream)
+                        if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
+                        engine.getResult(stream).text.trim().takeIf { it.isNotEmpty() }?.let(parts::add)
+                    } finally {
+                        stream.release()
+                    }
+                    offset = end
+                }
+                parts.joinToString(" ")
+            }
+        }
+
     /** Keep raw PCM capture separate from the streaming decoder. */
     private suspend fun captureAndTranscribeStreaming(current: Session): StreamingCaptureResult =
         withContext(Dispatchers.Default) {
@@ -621,7 +697,7 @@ class SpeechEngine private constructor(private val context: Context) {
                 }
                 initializeEngine(current.decoderConfig, deferTranscriptTransforms = true)
                 val engine = checkNotNull(onlineRecognizer)
-                val stream = createOnlineStream(engine)
+                val stream = createOnlineStream(engine, current.nemotronLanguage)
                 try {
                     coroutineScope {
                         // Capacity covers the entire bounded recording if inference temporarily
@@ -904,7 +980,7 @@ class SpeechEngine private constructor(private val context: Context) {
     /** Feed completed audio through the online recognizer for watch-file and History paths. */
     private fun decodeOnline(samples: FloatArray, current: Session): String {
         val engine = checkNotNull(onlineRecognizer)
-        val stream = createOnlineStream(engine)
+        val stream = createOnlineStream(engine, current.nemotronLanguage)
         return try {
             var offset = 0
             while (offset < samples.size) {
@@ -922,10 +998,11 @@ class SpeechEngine private constructor(private val context: Context) {
         } finally { stream.release() }
     }
 
-    /** sherpa's multilingual NeMo stream defaults to language auto when unset. */
-    private fun createOnlineStream(engine: OnlineRecognizer): OnlineStream {
+    /** Select a Nemotron language once per session, before feeding any samples. */
+    private fun createOnlineStream(engine: OnlineRecognizer, language: String): OnlineStream {
         val stream = engine.createStream()
         try {
+            stream.setOption("language", language)
             stream.acceptWaveform(FloatArray(NEMOTRON_LEFT_PADDING_SAMPLES), SAMPLE_RATE)
             return stream
         } catch (e: Throwable) {
@@ -1081,9 +1158,11 @@ class SpeechEngine private constructor(private val context: Context) {
         // Detach before destruction: even a native release exception cannot leave a
         // stale object available for a later session or a second release.
         val oldOnlineRecognizer = onlineRecognizer
+        val oldOfflineRecognizer = offlineRecognizer
         onlineRecognizer = null
+        offlineRecognizer = null
         loadedDecoderConfig = null
-        oldOnlineRecognizer?.release()
+        try { oldOnlineRecognizer?.release() } finally { oldOfflineRecognizer?.release() }
     }
 
     private fun setState(recording: Boolean, processing: Boolean, state: String = if (recording) "recording" else "processing") {

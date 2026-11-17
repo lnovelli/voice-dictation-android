@@ -65,6 +65,12 @@
                         android:text="Nemotron 3.5 streaming — 1.12 s"
                         android:textColor="@color/text_primary" />
                     <RadioButton
+                        android:id="@+id/modelFluidSpeechPro"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/model_fluid_speech_pro"
+                        android:textColor="@color/text_primary" />
+                    <RadioButton
                         android:id="@+id/modelMlkitAdvanced"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -80,6 +86,34 @@
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp"
                     android:layout_marginStart="32dp"
+                    android:layout_marginBottom="12dp" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/model_fluid_speech_pro_desc"
+                    android:autoLink="web"
+                    android:textColor="@color/text_secondary"
+                    android:textColorLink="@color/accent"
+                    android:textSize="12sp"
+                    android:layout_marginBottom="12dp" />
+                <TextView
+                    android:id="@+id/tvNemotronLanguageLabel"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:labelFor="@id/spinnerNemotronLanguage"
+                    android:text="@string/nemotron_language_label"
+                    android:textColor="@color/text_primary" />
+                <Spinner
+                    android:id="@+id/spinnerNemotronLanguage"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp" />
+                <TextView
+                    android:id="@+id/tvNemotronLanguageHint"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/nemotron_language_hint"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp"
                     android:layout_marginBottom="12dp" />
                 <TextView
                     android:layout_width="match_parent"

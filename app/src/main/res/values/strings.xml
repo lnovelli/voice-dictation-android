@@ -27,9 +27,15 @@
     <string name="model_section_title">Speech Recognition Model</string>
     <string name="asr_threads_title">Recognizer threads</string>
     <string name="asr_threads_value">Recognizer threads: %1$d</string>
-    <string name="asr_threads_hint">Choose 2–4 threads for Nemotron recognition. Changes apply to subsequent recognition sessions. Speed, battery use and heat depend on your device.</string>
+    <string name="asr_threads_hint">Choose 2–4 threads for on-device Nemotron or Fluid Speech Pro recognition. Changes apply to subsequent recognition sessions. Speed, battery use and heat depend on your device.</string>
     <string name="model_nemotron_streaming">Nemotron 3.5 ASR 560M (Multilingual, Streaming)</string>
     <string name="model_nemotron_streaming_desc">Processes audio during recording. Multilingual, with automatic language detection. INT8; ~475 MB download. Chunk size is not end-to-end latency.</string>
+    <string name="model_fluid_speech_pro">Fluid Speech Pro — offline after stop</string>
+    <string name="model_fluid_speech_pro_desc">Fluid Speech Pro by FluidVoice, CC BY 4.0: https://huggingface.co/FluidVoice-Labs/fluid-speech-pro-onnx and https://creativecommons.org/licenses/by/4.0/ . INT8 ONNX version based on NVIDIA Parakeet TDT 0.6B v3 and Moondream Parakeet Ultra. Automatically detects 25 European languages. About 801 MB download. Runs locally after stopping; no live preview. Longer recordings are split into fixed chunks, without voice activity detection.</string>
+    <string name="nemotron_language_label">Nemotron recognition language</string>
+    <string name="nemotron_language_auto">Auto-detect language</string>
+    <string name="nemotron_language_broad">broad coverage</string>
+    <string name="nemotron_language_hint">Applied to the next Nemotron session. Broad-coverage languages may have higher error rates. Fluid Speech Pro always detects language automatically; ML Kit uses its separate locale below.</string>
     <string name="model_mlkit_advanced">ML Kit GenAI Speech Recognition — Advanced</string>
     <string name="mlkit_checking">ML Kit Advanced: checking device availability…</string>
     <string name="mlkit_available">ML Kit Advanced: ready to use.</string>
@@ -105,7 +111,7 @@
     <string name="vocabulary_spelling_hint">Post-transcript spelling only: recases or joins/splits spaces when the recognized letters already match. Independent of the experimental acoustic hotword switch in the Vocabulary tab; these hints cannot correct sound-alike recognition.</string>
     <string name="acoustic_vocabulary_title">Nemotron word boosting (experimental)</string>
     <string name="acoustic_vocabulary_toggle">Enable acoustic word boosting</string>
-    <string name="acoustic_vocabulary_warning">Nemotron only; ML Kit Advanced does not use acoustic word boosting. Off by default. Word boosting uses modified beam search and can change, repeat or omit speech; accuracy is not guaranteed. Only plain text terms (letters, digits, spaces, apostrophes or hyphens) are used for acoustic bias; unsupported saved entries remain available as spelling hints.</string>
+    <string name="acoustic_vocabulary_warning">Nemotron only; Fluid Speech Pro and ML Kit Advanced do not use acoustic word boosting. Off by default. Word boosting uses modified beam search and can change, repeat or omit speech; accuracy is not guaranteed. Only plain text terms (letters, digits, spaces, apostrophes or hyphens) are used for acoustic bias; unsupported saved entries remain available as spelling hints.</string>
     <string name="max_active_paths_label">Beam search paths</string>
     <string name="max_active_paths_value">Beam search paths: %1$d (2–8)</string>
     <string name="hotwords_score_label">Word boost score</string>
