@@ -14,6 +14,6 @@ History stores bounded, validated original WAV audio against the same live-captu
 
 Each History row displays recording duration in seconds, derived from the validated original WAV header off the UI thread; missing or invalid audio is reported as unavailable, not zero.
 
-During History playback, 1x, 1.5x and 2x controls change the active player's speed without restarting it; playback begins at 1x and ends on pause or view teardown. A successful reprocess toast reports monotonic elapsed seconds from starting the retry through completion, excluding confirmation; cancellation and failure do not report a success duration.
+During History playback, 1x, 1.5x and 2x controls change the active player's speed without restarting it; playback begins at 1x and ends on pause or view teardown. A successful reprocess toast reports monotonic elapsed seconds from starting the retry through completion, excluding confirmation, plus separate optional high-pass and model-processing times. Model time includes model setup, VAD and scheduling but excludes the high-pass; total also includes file loading and any polishing, so the times need not sum to the total. Cancellation and failure do not report a success duration.
 
 Formerly missing History recordings cannot be recovered from transcripts.

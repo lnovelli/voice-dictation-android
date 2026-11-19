@@ -20,12 +20,26 @@ data class ModelInfo(
     val archiveFormat: ModelArchiveFormat = ModelArchiveFormat.TAR_BZ2,
     val archiveSize: Long? = null
 ) {
+    // ZIP models must have a complete immutable catalog before download or readiness.
+    val hasCompleteZipMetadata: Boolean
+        get() {
+            val required = setOf(encoderFileName, decoderFileName, joinerFileName, tokensFileName)
+            val names = directFiles.map { it.name }
+            return archiveFormat == ModelArchiveFormat.ZIP && archiveUrl.startsWith("https://") &&
+                archiveSize != null && archiveSize > 0 &&
+                archiveSha256?.matches(Regex("[0-9a-f]{64}")) == true &&
+                required.size == 4 && names.size == 4 && names.toSet() == required &&
+                directFiles.all { it.name.isNotEmpty() && '/' !in it.name && '\\' !in it.name &&
+                    it.name != "." && it.name != ".." && it.size > 0 &&
+                    it.sha256.matches(Regex("[0-9a-f]{64}")) }
+        }
+
     companion object {
         // SM8750 QNN context binaries generated together and pinned as one ZIP.
         val FLUID_SPEECH_PRO_QNN = ModelInfo(
             id = "fluid_speech_pro_qnn_sm8750",
-            displayName = "Fluid Speech Pro NPU (SM8750)",
-            description = "Experimental, untested Galaxy S25 Snapdragon 8 Elite NPU model.",
+            displayName = "Fluid Speech Pro NPU 10s (SM8750)",
+            description = "Experimental 10-second Galaxy S25 Snapdragon 8 Elite NPU model.",
             archiveUrl = "https://secure.ipv64.net/download/fluid-speech-pro-qnn-sm8750-10s-f76d03ca.zip",
             dirName = "fluid-speech-pro-qnn-sm8750",
             encoderFileName = "encoder.bin",
@@ -39,6 +53,46 @@ data class ModelInfo(
                 ModelFile("encoder.bin", 612241408L, "c964659bc74dfeb00f67e7142af8e9abbda8bea68c26df3408f5dda45bed7323"),
                 ModelFile("decoder.bin", 23715840L, "e292ef57f04425d6d083c0a87cd3f59ff547ebd207ec7653650ab3d76707aa1b"),
                 ModelFile("joiner.bin", 6537216L, "3b27d31ccdeb8ecc02d5b0b048fb05c96ce4815c8eb4aa17a85b1bb10f87e404"),
+                ModelFile("tokens.txt", 93934L, "06c76ebf093e64fbcc1699b42a174022f3e6c8c8073090e8de782403f5c8905b")
+            )
+        )
+        val FLUID_SPEECH_PRO_QNN_15S = ModelInfo(
+            id = "fluid_speech_pro_qnn_sm8750_15s",
+            displayName = "Fluid Speech Pro NPU 15s (SM8750)",
+            description = "Experimental, untested 15-second Galaxy S25 Snapdragon 8 Elite NPU model.",
+            archiveUrl = "https://secure.ipv64.net/download/fluid-speech-pro-qnn-sm8750-15s-87183120a63049f49b0db1dfd43f5870f86e95e2467e44556792cb8c81058cec.zip",
+            dirName = "fluid-speech-pro-qnn-sm8750-15s",
+            encoderFileName = "encoder.bin",
+            decoderFileName = "decoder.bin",
+            joinerFileName = "joiner.bin",
+            tokensFileName = "tokens.txt",
+            archiveFormat = ModelArchiveFormat.ZIP,
+            archiveSize = 458310578L,
+            archiveSha256 = "87183120a63049f49b0db1dfd43f5870f86e95e2467e44556792cb8c81058cec",
+            directFiles = listOf(
+                ModelFile("encoder.bin", 618266624L, "6f4c19fe991d165f14a18ecc5749d0bbeec01a788f3e42c96d87bd5427a326c9"),
+                ModelFile("decoder.bin", 23715840L, "e292ef57f04425d6d083c0a87cd3f59ff547ebd207ec7653650ab3d76707aa1b"),
+                ModelFile("joiner.bin", 6537216L, "dbc0d93428cb6ebb1150b914eb39adaa18ac832e1075892906632842632e4035"),
+                ModelFile("tokens.txt", 93934L, "06c76ebf093e64fbcc1699b42a174022f3e6c8c8073090e8de782403f5c8905b")
+            )
+        )
+        val FLUID_SPEECH_PRO_QNN_30S = ModelInfo(
+            id = "fluid_speech_pro_qnn_sm8750_30s",
+            displayName = "Fluid Speech Pro NPU 30s (SM8750)",
+            description = "Experimental 30-second Galaxy S25 Snapdragon 8 Elite NPU model.",
+            archiveUrl = "https://secure.ipv64.net/download/fluid-speech-pro-qnn-sm8750-30s-f5402009.zip",
+            dirName = "fluid-speech-pro-qnn-sm8750-30s",
+            encoderFileName = "encoder.bin",
+            decoderFileName = "decoder.bin",
+            joinerFileName = "joiner.bin",
+            tokensFileName = "tokens.txt",
+            archiveFormat = ModelArchiveFormat.ZIP,
+            archiveSize = 463425217L,
+            archiveSha256 = "f5402009bff3b9dbb32ecaf302a79c59644e233a63daa5072581902b8f997a02",
+            directFiles = listOf(
+                ModelFile("encoder.bin", 633352192L, "d980fbbcbd71fbb2fbb90b91f3914cd3be72f28588effdf6f97c568b35f66443"),
+                ModelFile("decoder.bin", 23715840L, "e292ef57f04425d6d083c0a87cd3f59ff547ebd207ec7653650ab3d76707aa1b"),
+                ModelFile("joiner.bin", 6537216L, "03a1544841488768129220fdaf6912d7370e242c756f0ec4ec67240d66b6f556"),
                 ModelFile("tokens.txt", 93934L, "06c76ebf093e64fbcc1699b42a174022f3e6c8c8073090e8de782403f5c8905b")
             )
         )
@@ -91,6 +145,8 @@ data class ModelInfo(
                 NEMOTRON_STREAMING_560MS.id -> NEMOTRON_STREAMING_560MS
                 FLUID_SPEECH_PRO.id -> FLUID_SPEECH_PRO
                 FLUID_SPEECH_PRO_QNN.id -> FLUID_SPEECH_PRO_QNN
+                FLUID_SPEECH_PRO_QNN_15S.id -> FLUID_SPEECH_PRO_QNN_15S
+                FLUID_SPEECH_PRO_QNN_30S.id -> FLUID_SPEECH_PRO_QNN_30S
                 else -> NEMOTRON_STREAMING
             }
         }

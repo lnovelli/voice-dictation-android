@@ -247,6 +247,10 @@ class SettingsFragment : Fragment() {
     }
 
     private fun setupModelSelection() {
+        binding.switchFluidHighPass.isChecked = prefs.fluidHighPassEnabled
+        binding.switchFluidHighPass.setOnCheckedChangeListener { _, checked ->
+            prefs.fluidHighPassEnabled = checked
+        }
         binding.switchStreamingPreview.isChecked = prefs.streamingPreviewEnabled
         binding.switchStreamingPreview.setOnCheckedChangeListener { _, checked ->
             if (updatingPreviewToggle) return@setOnCheckedChangeListener
@@ -300,6 +304,8 @@ class SettingsFragment : Fragment() {
         binding.modelVariants.check(when (prefs.selectedModelId) {
             AppPreferences.MODEL_FLUID_SPEECH_PRO -> R.id.modelFluidSpeechPro
             AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN -> R.id.modelFluidSpeechProQnn
+            AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN_15S -> R.id.modelFluidSpeechProQnn15s
+            AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN_30S -> R.id.modelFluidSpeechProQnn30s
             AppPreferences.MODEL_MLKIT_ADVANCED -> R.id.modelMlkitAdvanced
             else -> R.id.model1120ms
         })
@@ -308,6 +314,8 @@ class SettingsFragment : Fragment() {
                 R.id.model1120ms -> AppPreferences.MODEL_NEMOTRON_STREAMING
                 R.id.modelFluidSpeechPro -> AppPreferences.MODEL_FLUID_SPEECH_PRO
                 R.id.modelFluidSpeechProQnn -> AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN
+                R.id.modelFluidSpeechProQnn15s -> AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN_15S
+                R.id.modelFluidSpeechProQnn30s -> AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN_30S
                 R.id.modelMlkitAdvanced -> AppPreferences.MODEL_MLKIT_ADVANCED
                 else -> return@setOnCheckedChangeListener
             }
@@ -317,7 +325,9 @@ class SettingsFragment : Fragment() {
         binding.btnDownloadModel.setOnClickListener {
             when (prefs.selectedModelId) {
                 AppPreferences.MODEL_MLKIT_ADVANCED -> startMlkitDownload()
-                AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN -> startQnnDownload()
+                AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN,
+                AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN_15S,
+                AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN_30S -> startQnnDownload()
                 else -> startModelDownload()
             }
         }
@@ -411,10 +421,18 @@ class SettingsFragment : Fragment() {
         val isMlkit = prefs.selectedModelId == AppPreferences.MODEL_MLKIT_ADVANCED
         val isNemotron = prefs.selectedModelId == AppPreferences.MODEL_NEMOTRON_STREAMING
         val isFluid = prefs.selectedModelId == AppPreferences.MODEL_FLUID_SPEECH_PRO
-        val isQnn = prefs.selectedModelId == AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN
+        val isQnn15s = prefs.selectedModelId == AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN_15S
+        val isQnn30s = prefs.selectedModelId == AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN_30S
+        val isQnn = prefs.selectedModelId == AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN || isQnn15s || isQnn30s
         binding.tvNemotronDescription.visibility = if (isNemotron) View.VISIBLE else View.GONE
         binding.layoutFluidSettings.visibility = if (isFluid) View.VISIBLE else View.GONE
+        binding.layoutFluidHighPass.visibility = if (isFluid || isQnn) View.VISIBLE else View.GONE
         binding.tvFluidQnnDescription.visibility = if (isQnn) View.VISIBLE else View.GONE
+        if (isQnn) binding.tvFluidQnnDescription.setText(when {
+            isQnn15s -> R.string.model_fluid_speech_pro_qnn_15s_desc
+            isQnn30s -> R.string.model_fluid_speech_pro_qnn_30s_desc
+            else -> R.string.model_fluid_speech_pro_qnn_desc
+        })
         binding.layoutMlkitSettings.visibility = if (isMlkit) View.VISIBLE else View.GONE
         binding.tvNemotronLanguageLabel.visibility = if (isNemotron) View.VISIBLE else View.GONE
         binding.spinnerNemotronLanguage.visibility = if (isNemotron) View.VISIBLE else View.GONE
@@ -448,9 +466,20 @@ class SettingsFragment : Fragment() {
         val downloaded = modelManager.isModelDownloaded(model)
 
         if (isQnn) {
-            val available = model.archiveUrl.isNotBlank()
-            binding.tvModelStatus.text = getString(if (downloaded) R.string.model_qnn_installed
-                else if (available) R.string.model_qnn_not_installed else R.string.model_qnn_download_unavailable)
+            val available = model.hasCompleteZipMetadata
+            binding.tvModelStatus.text = getString(if (downloaded) {
+                when {
+                    isQnn15s -> R.string.model_qnn_15s_installed
+                    isQnn30s -> R.string.model_qnn_30s_installed
+                    else -> R.string.model_qnn_installed
+                }
+            } else if (available) {
+                when {
+                    isQnn15s -> R.string.model_qnn_15s_not_installed
+                    isQnn30s -> R.string.model_qnn_30s_not_installed
+                    else -> R.string.model_qnn_not_installed
+                }
+            } else R.string.model_qnn_download_unavailable)
             binding.tvModelStatus.setTextColor(ContextCompat.getColor(requireContext(), if (downloaded) R.color.success else R.color.warning))
             binding.btnDownloadModel.setText(if (downloaded) R.string.status_ready else R.string.btn_download)
             binding.btnDownloadModel.isEnabled = !isDownloading && !downloaded && available
@@ -478,7 +507,9 @@ class SettingsFragment : Fragment() {
     private fun supportsStreamingPreview(modelId: String): Boolean = when (modelId) {
         AppPreferences.MODEL_NEMOTRON_STREAMING,
         AppPreferences.MODEL_FLUID_SPEECH_PRO,
-        AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN -> true
+        AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN,
+        AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN_15S,
+        AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN_30S -> true
         else -> false
     }
 
@@ -583,13 +614,20 @@ class SettingsFragment : Fragment() {
     }
 
     private fun startQnnDownload() {
-        if (isDownloading || ModelInfo.FLUID_SPEECH_PRO_QNN.archiveUrl.isBlank()) return
+        val modelId = prefs.selectedModelId
+        if (modelId != AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN &&
+            modelId != AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN_15S &&
+            modelId != AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN_30S) return
+        val model = ModelInfo.getModelById(modelId)
+        if (isDownloading || !model.hasCompleteZipMetadata) return
         val ui = _binding ?: return
         val owner = viewLifecycleOwner
         isDownloading = true
         ui.model1120ms.isEnabled = false
         ui.modelFluidSpeechPro.isEnabled = false
         ui.modelFluidSpeechProQnn.isEnabled = false
+        ui.modelFluidSpeechProQnn15s.isEnabled = false
+        ui.modelFluidSpeechProQnn30s.isEnabled = false
         ui.modelMlkitAdvanced.isEnabled = false
         ui.btnDownloadModel.isEnabled = false
         ui.btnDeleteModel.isEnabled = false
@@ -602,7 +640,7 @@ class SettingsFragment : Fragment() {
             try {
                 // Drain native use before replacing an already installed model.
                 speechEngine.releaseEngine().join()
-                val result = modelManager.downloadModel(ModelInfo.FLUID_SPEECH_PRO_QNN) { step, progress ->
+                val result = modelManager.downloadModel(model) { step, progress ->
                     owner.lifecycleScope.launch(Dispatchers.Main) {
                         if (_binding === ui && isDownloading) {
                             ui.progressBarModel.progress = progress
@@ -611,7 +649,13 @@ class SettingsFragment : Fragment() {
                     }
                 }
                 if (_binding === ui && isAdded) {
-                    Toast.makeText(requireContext(), if (result.isSuccess) R.string.model_qnn_download_success
+                    Toast.makeText(requireContext(), if (result.isSuccess) {
+                        when (modelId) {
+                            AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN_15S -> R.string.model_qnn_15s_download_success
+                            AppPreferences.MODEL_FLUID_SPEECH_PRO_QNN_30S -> R.string.model_qnn_30s_download_success
+                            else -> R.string.model_qnn_download_success
+                        }
+                    }
                         else R.string.model_qnn_download_failed, Toast.LENGTH_LONG).show()
                 }
             } catch (e: CancellationException) {
@@ -626,6 +670,8 @@ class SettingsFragment : Fragment() {
                     ui.model1120ms.isEnabled = true
                     ui.modelFluidSpeechPro.isEnabled = true
                     ui.modelFluidSpeechProQnn.isEnabled = true
+                    ui.modelFluidSpeechProQnn15s.isEnabled = true
+                    ui.modelFluidSpeechProQnn30s.isEnabled = true
                     ui.layoutDownloadProgress.visibility = View.GONE
                     ui.btnCancelModelDownload.visibility = View.GONE
                     updateModelStatus()
@@ -640,6 +686,8 @@ class SettingsFragment : Fragment() {
         binding.model1120ms.isEnabled = false
         binding.modelFluidSpeechPro.isEnabled = false
         binding.modelFluidSpeechProQnn.isEnabled = false
+        binding.modelFluidSpeechProQnn15s.isEnabled = false
+        binding.modelFluidSpeechProQnn30s.isEnabled = false
         binding.modelMlkitAdvanced.isEnabled = false
         binding.btnDownloadModel.isEnabled = false
         binding.layoutDownloadProgress.visibility = View.VISIBLE
@@ -661,6 +709,8 @@ class SettingsFragment : Fragment() {
                 binding.model1120ms.isEnabled = true
                 binding.modelFluidSpeechPro.isEnabled = true
                 binding.modelFluidSpeechProQnn.isEnabled = true
+                binding.modelFluidSpeechProQnn15s.isEnabled = true
+                binding.modelFluidSpeechProQnn30s.isEnabled = true
                 binding.layoutDownloadProgress.visibility = View.GONE
 
                 if (result.isSuccess) {

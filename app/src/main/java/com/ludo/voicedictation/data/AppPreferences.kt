@@ -36,6 +36,7 @@ class AppPreferences(context: Context) {
         private const val KEY_NEMOTRON_LANGUAGE = "nemotron_language"
         private const val KEY_STREAMING_PREVIEW = "streaming_preview_enabled"
         private const val KEY_FLUID_STREAMING = "fluid_streaming_enabled"
+        private const val KEY_FLUID_HIGH_PASS = "fluid_high_pass_enabled"
         private const val KEY_ASR_THREAD_COUNT = "asr_thread_count"
         private const val KEY_PREFERRED_MICROPHONE = "preferred_microphone_v1"
         private const val KEY_HISTORY_LIMIT = "history_limit"
@@ -70,12 +71,17 @@ class AppPreferences(context: Context) {
         private const val MAX_TRANSCRIPT_POLISHING_SYSTEM_PROMPT_CHARACTERS = 12_000
         const val DEFAULT_TRANSCRIPT_POLISHING_ENDPOINT = "http://127.0.0.1:11434"
         const val DEFAULT_TRANSCRIPT_POLISHING_MODEL = "default"
-        val DEFAULT_TRANSCRIPT_REMOVALS: List<String> = listOf("um", "uhm", "uh")
+        val DEFAULT_TRANSCRIPT_REMOVALS: List<String> = listOf(
+            "um", "urm", "uh", "ugh", "er", "eh", "umm", "uhh", "err", "ahh",
+            "ehh", "hmm", "hm", "mm", "mmm", "erm", "uhm"
+        )
 
         const val MODEL_NEMOTRON_STREAMING = "nemotron_3_5_streaming"
         const val MODEL_NEMOTRON_STREAMING_560MS = "nemotron_3_5_streaming_560ms"
         const val MODEL_FLUID_SPEECH_PRO = "fluid_speech_pro"
         const val MODEL_FLUID_SPEECH_PRO_QNN = "fluid_speech_pro_qnn_sm8750"
+        const val MODEL_FLUID_SPEECH_PRO_QNN_15S = "fluid_speech_pro_qnn_sm8750_15s"
+        const val MODEL_FLUID_SPEECH_PRO_QNN_30S = "fluid_speech_pro_qnn_sm8750_30s"
         const val MODEL_MLKIT_ADVANCED = "mlkit_genai_advanced"
     }
 
@@ -128,7 +134,8 @@ class AppPreferences(context: Context) {
             // Migrate the retired 560 ms selection, including older imported backups.
             if (selected != MODEL_NEMOTRON_STREAMING &&
                 selected != MODEL_MLKIT_ADVANCED && selected != MODEL_FLUID_SPEECH_PRO &&
-                selected != MODEL_FLUID_SPEECH_PRO_QNN) {
+                selected != MODEL_FLUID_SPEECH_PRO_QNN && selected != MODEL_FLUID_SPEECH_PRO_QNN_15S &&
+                selected != MODEL_FLUID_SPEECH_PRO_QNN_30S) {
                 prefs.edit().putString(KEY_SELECTED_MODEL, MODEL_NEMOTRON_STREAMING).apply()
                 return MODEL_NEMOTRON_STREAMING
             }
@@ -145,6 +152,11 @@ class AppPreferences(context: Context) {
     var fluidStreamingEnabled: Boolean
         get() = prefs.getBoolean(KEY_FLUID_STREAMING, false)
         set(value) = prefs.edit().putBoolean(KEY_FLUID_STREAMING, value).apply()
+
+    /** Optional Fluid final-pass filter; snapshotted for each session. */
+    var fluidHighPassEnabled: Boolean
+        get() = prefs.getBoolean(KEY_FLUID_HIGH_PASS, false)
+        set(value) = prefs.edit().putBoolean(KEY_FLUID_HIGH_PASS, value).apply()
 
     /** Explicit ML Kit locale; no automatic language detection is assumed. */
     var mlKitLocaleTag: String

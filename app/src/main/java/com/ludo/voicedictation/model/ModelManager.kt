@@ -41,6 +41,7 @@ class ModelManager(private val context: Context) {
     }
 
     private fun hasModelFiles(model: ModelInfo, dir: File): Boolean {
+        if (model.archiveFormat == ModelArchiveFormat.ZIP && !model.hasCompleteZipMetadata) return false
         if (!dir.exists() || !dir.isDirectory) return false
         if (model.directFiles.isNotEmpty()) {
             return model.directFiles.all { spec ->
@@ -65,6 +66,9 @@ class ModelManager(private val context: Context) {
         val jobContext = currentCoroutineContext()
         var staging: File? = null
         try {
+            check(model.archiveFormat != ModelArchiveFormat.ZIP || model.hasCompleteZipMetadata) {
+                "Model download is not available yet"
+            }
             if (isModelDownloaded(model)) return@withContext Result.success(Unit)
             check(model.archiveUrl.isNotBlank()) { "Model download is not available yet" }
             // Work in a private, unique staging directory, never in an installed model.

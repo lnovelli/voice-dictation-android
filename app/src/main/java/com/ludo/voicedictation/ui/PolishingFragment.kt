@@ -2,6 +2,7 @@ package com.ludo.voicedictation.ui
 
 import android.os.Bundle
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
@@ -62,6 +63,20 @@ class PolishingFragment : Fragment() {
     }
 
     private fun setupTranscriptRemoval() {
+        binding.etTranscriptRemovals.apply {
+            // Show about three and a half lines, scaled to the current text size.
+            maxHeight = (lineHeight * 3.5f).toInt() + compoundPaddingTop + compoundPaddingBottom
+            setOnTouchListener { view, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> if (view.canScrollVertically(1) || view.canScrollVertically(-1)) {
+                        view.parent.requestDisallowInterceptTouchEvent(true)
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                        view.parent.requestDisallowInterceptTouchEvent(false)
+                }
+                false
+            }
+        }
         binding.switchTranscriptRemoval.isChecked = prefs.transcriptRemovalEnabled
         binding.switchTranscriptRemoval.setOnCheckedChangeListener { _, enabled ->
             prefs.transcriptRemovalEnabled = enabled

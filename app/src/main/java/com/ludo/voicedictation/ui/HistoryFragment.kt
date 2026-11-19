@@ -238,12 +238,19 @@ class HistoryFragment : Fragment() {
         val fragment = WeakReference(this)
         val startedAt = SystemClock.elapsedRealtime()
         val listener = object : SpeechEngine.ExternalListener {
+            private var filterNanos: Long? = null
+            private var modelNanos: Long? = null
             override fun onState(state: String) = Unit
+
+            override fun onHistoryTimings(filterNanos: Long?, modelNanos: Long) {
+                this.filterNanos = filterNanos
+                this.modelNanos = modelNanos
+            }
 
             override fun onFinished(text: String?, error: String?) {
                 val elapsedMillis = SystemClock.elapsedRealtime() - startedAt
                 val updated = text?.let { preferences.updateHistoryTranscript(item.id, it) } == true
-                fragment.get()?.finishAudioReprocess(item.id, updated, text != null, error, elapsedMillis)
+                fragment.get()?.finishAudioReprocess(item.id, updated, text != null, error, elapsedMillis, filterNanos, modelNanos)
             }
         }
         val authorizedPolishing = polishingConfiguration?.takeIf { prefs.transcriptPolishingEnabled }
@@ -270,7 +277,10 @@ class HistoryFragment : Fragment() {
         SpeechEngine.getInstance(requireContext()).cancelHistoryReprocess(reprocessOwner)
     }
 
-    private fun finishAudioReprocess(itemId: String, updated: Boolean, hadText: Boolean, error: String?, elapsedMillis: Long) {
+    private fun finishAudioReprocess(
+        itemId: String, updated: Boolean, hadText: Boolean, error: String?, elapsedMillis: Long,
+        filterNanos: Long?, modelNanos: Long?
+    ) {
         if (reprocessingItemId == itemId) {
             reprocessingItemId = null
             reprocessCancelling = false
@@ -278,9 +288,18 @@ class HistoryFragment : Fragment() {
         }
         if (_binding != null && isAdded) {
             val message = when {
-                updated -> getString(R.string.history_audio_reprocess_done, NumberFormat.getNumberInstance().apply {
-                    maximumFractionDigits = 2
-                }.format(elapsedMillis / 1000.0))
+                updated -> {
+                    val format = NumberFormat.getNumberInstance().apply { maximumFractionDigits = 3 }
+                    val total = format.format(elapsedMillis / 1000.0)
+                    if (modelNanos == null) getString(R.string.history_audio_reprocess_done, total)
+                    else {
+                        val filter = filterNanos?.let {
+                            getString(R.string.history_audio_filter_seconds, format.format(it / 1_000_000_000.0))
+                        } ?: getString(R.string.history_audio_filter_not_used)
+                        getString(R.string.history_audio_reprocess_timing, total, filter,
+                            format.format(modelNanos / 1_000_000_000.0))
+                    }
+                }
                 hadText -> null // The history entry was deleted before completion.
                 error != null -> getString(R.string.history_audio_reprocess_failed)
                 else -> null // User cancelled; preserve the current transcript.

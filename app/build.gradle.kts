@@ -11,8 +11,8 @@ android {
         applicationId = "com.ludo.voicedictation"
         minSdk = 26
         targetSdk = 34
-        versionCode = 70
-        versionName = "1.2.49"
+        versionCode = 84
+        versionName = "1.2.50"
 
         ndk {
             abiFilters.add("arm64-v8a")
@@ -57,7 +57,7 @@ kotlin {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
-    // QNN-enabled JNI retains the CPU bindings; keep the original AAR on disk, not on the classpath.
+    // The QNN-enabled sherpa-onnx library also retains the CPU bindings.
     implementation(files("libs/sherpa-onnx-2.0.1-qnn-v79-kotlin-935e5ded.aar"))
     implementation("com.google.mlkit:genai-speech-recognition:1.0.0-alpha2")
     implementation("androidx.core:core-ktx:1.13.1")

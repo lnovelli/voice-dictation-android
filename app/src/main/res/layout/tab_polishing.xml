@@ -49,7 +49,7 @@
                     android:inputType="textMultiLine|textNoSuggestions"
                     android:gravity="top|start"
                     android:minLines="3"
-                    android:maxLines="6"
+                    android:scrollbars="vertical"
                     android:maxLength="8192"
                     android:importantForAutofill="no" />
             </com.google.android.material.textfield.TextInputLayout>

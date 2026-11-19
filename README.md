@@ -1,14 +1,14 @@
 # Voice Dictation for Android
 
-An on-device, privacy-first voice dictation application for Android powered by NVIDIA Nemotron streaming through sherpa-onnx, with optional ML Kit GenAI Speech Recognition Advanced on supported devices.
+An on-device, privacy-first voice dictation application for Android powered by NVIDIA Nemotron streaming and Fluid Speech Pro through sherpa-onnx, with optional ML Kit GenAI Speech Recognition Advanced on supported devices.
 
 Voice Dictation brings seamless system-wide voice input to any text field across Android without sending audio data to third-party cloud servers.
 
 ---
 
-## Current release: v1.2.48 (build 69; ARM64-only)
+## Current release: v1.2.50 (build 84; ARM64-only)
 
-Adds owner-bound remote PCM streaming for compatible clients, with Nemotron interim previews and final byte-count and SHA-256 validation. This release has not been tested on a device. Device behavior and recognition accuracy depend on the app and device; backup and restore depend on Android's transport.
+Adds Fluid Speech Pro CPU and experimental Snapdragon 8 Elite NPU recognition, optional Fluid live previews and an optional 80 Hz high-pass filter for final recognition. History reprocessing reports filter and model processing times. The 15-second NPU model and high-pass recognition accuracy have not been tested on a device. Device behavior and recognition accuracy depend on the app and device; backup and restore depend on Android's transport.
 
 Settings JSON is unencrypted and may contain private vocabulary, endpoints and prompts. It excludes transcript history, audio, downloaded models and system permissions. Android cloud backup may include settings and transcript history, but excludes models and saved audio.
 
@@ -16,7 +16,8 @@ Settings JSON is unencrypted and may contain private vocabulary, endpoints and p
 
 - **Local & Private Inference:** Runs locally on your Android device using `sherpa-onnx` and ONNX Runtime Mobile with ARM NEON CPU acceleration, or ML Kit GenAI Speech Recognition Advanced on supported devices.
 - **State-of-the-Art ASR Models:**
-  - **Nemotron 3.5 ASR 0.6B (Multilingual, Streaming):** Choose a 560 ms or 1,120 ms model chunk size. Language is detected automatically; model chunk size is not an end-to-end latency guarantee. The app returns final text on Stop.
+  - **Nemotron 3.5 ASR 0.6B (Multilingual, Streaming):** Uses a 1,120 ms model chunk size, with automatic language detection or an optional language selection. Model chunk size is not an end-to-end latency guarantee. The app returns final text on Stop.
+  - **Fluid Speech Pro:** CPU and experimental Snapdragon 8 Elite (SM8750) NPU variants are available. NPU models offer 10-, 15- and 30-second windows and are downloaded separately. Optional previews use repeated provisional offline decodes, not a streaming decoder. The optional 80 Hz high-pass filter applies to final Fluid recognition only and leaves saved audio unchanged; its impact on accuracy is unverified.
   - **ML Kit GenAI Speech Recognition Advanced:** Available only on supported devices, after checking model availability and downloading if needed. Choose a speech language. Acoustic word boosting applies only to Nemotron.
 - **One-Click Model Download:** In-app model downloader with real-time progress, background transfer, and automatic local archive extraction.
 - **Smart Floating Overlay Button:**
@@ -25,7 +26,7 @@ Settings JSON is unencrypted and may contain private vocabulary, endpoints and p
   - On Android 13+, system input-start/finish callbacks help identify supported custom editors; the app does not read typed text or cursor positions to decide visibility.
   - Optional **Keep button visible while unlocked** mode supports apps that do not expose editable focus to accessibility services. It can overlap sensitive screens; Android can still hide overlays when an app explicitly blocks them, and inaccessible fields may require clipboard paste.
   - Draggable partly beyond any screen edge, with independent saved positions for portrait and landscape; an unset position starts vertically centered at the right edge.
-  - Optional Nemotron streaming preview shows interim words in a separate draggable overlay, up to two lines. ML Kit live preview is not implemented. It is local-dictation only; preview text is visible on screen, may change before the final result, and clears when recording ends.
+  - Optional Nemotron and Fluid previews show interim words in a separate draggable overlay, up to two lines. Fluid previews are provisional repeated offline decodes; ML Kit live preview is not implemented. Preview text is visible on screen, may change before the final result, and clears when recording ends.
   - Adjustable floating icon size (50–150%) and opacity, applied immediately from Settings.
   - In normal focus-triggered mode, the button generally hides when focus moves away from text fields, but stale accessibility information can keep it visible; the optional always-visible mode stays on while the device is unlocked.
   - Settings can disable autofill/competing-window collision suppression. Dictation inserts only into the field focused when recording started; if focus changes or no field was focused, the result is copied to the clipboard with a brief toast.
@@ -48,12 +49,12 @@ Settings JSON is unencrypted and may contain private vocabulary, endpoints and p
   - The built-in prompt preserves the speaker’s meaning, language and tone while lightly fixing grammar, syntax and clear recognition errors. It uses chunk boundaries as hints rather than sentence boundaries, including joining and separating sentences, and corrects “up” to “app” when context warrants it. Vocabulary is only a context-supported spelling/recognition hint. Configured local filler-removal and replacement rules still run afterward. Saved custom prompts are retained; restore the built-in prompt to use the updated editing instructions.
   - Polishing requests a strict JSON-schema response. Server support is required: HTTP, timeout, malformed, non-schema or empty responses retain the original ASR transcript and apply existing local post-processing. The synthetic connection test does not check JSON-schema support.
 - **Editable Final-Transcript Removal List:**
-  - Enabled by default with conservative fillers `um`, `uhm`, `uh` (not ambiguous `ah`, `like` or `so`). The Polish tab provides a switch, one-word/phrase-per-line editor, Save and Restore Defaults.
+  - Enabled by default for `um`, `urm`, `uh`, `ugh`, `er`, `eh`, `umm`, `uhh`, `err`, `ahh`, `ehh`, `hmm`, `hm`, `mm`, `mmm`, `erm` and `uhm`. The Polish tab provides a switch, a scrollable one-word/phrase-per-line editor, Save and Restore Defaults. Existing saved lists are preserved; use Restore Defaults to replace them with the current defaults.
   - Removes literal case-insensitive Unicode whole words/phrases only, never substrings such as `um` inside `album`. Apostrophe/hyphen words and combining marks are protected; punctuation and spacing left by removals are cleaned conservatively.
   - Applies only after the single final decode, identically to floating/live/file results and history. Disable or save an empty list to preserve text. If everything is removed, normal no-speech ERROR safety applies; no empty result is submitted.
 - **Transcription History:**
   - Automatically stores recent transcripts with timestamps and saves the complete original recording as one WAV alongside each new successful entry, up to the live capture limit (currently 10 minutes). The History tab can play saved audio or reprocess it to replace the existing transcript while keeping its ID, timestamp and recording.
-  - **Reprocess** uses the selected model and current text-processing settings. It never pastes or submits the result. If AI polishing is enabled, the app asks before sending transcript text (never audio) to the configured server.
+  - **Reprocess** uses the selected model and current text-processing settings. A successful retry reports total, optional high-pass and model-processing times; the total may include other work. It never pastes or submits the result. If AI polishing is enabled, the app asks before sending transcript text (never audio) to the configured server.
   - Audio stays in app-private storage excluded from Android backups; deleting, clearing, or trimming a history entry removes its audio. Live recordings are bounded to 10 minutes; completed-file IPC imports remain capped at 120 seconds. History is subject to the configured retention limit. Entries created before v1.1.7 have no audio attachment.
   - Configurable retention limit (default 10, adjustable from 5 to 50).
   - One-tap clipboard copy and deletion.

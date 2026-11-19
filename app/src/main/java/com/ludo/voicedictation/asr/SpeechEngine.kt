@@ -46,8 +46,10 @@ class SpeechEngine private constructor(private val context: Context) {
         private const val STREAM_CHUNK_SAMPLES = SAMPLE_RATE / 5
         // The Fluid model card reports testing up to 30 seconds.
         private const val FLUID_CHUNK_SAMPLES = SAMPLE_RATE * 30
-        // The SM8750 QNN context has a fixed 1000-frame (10-second) encoder.
-        private const val FLUID_QNN_CHUNK_SAMPLES = SAMPLE_RATE * 10
+        // The SM8750 QNN contexts have fixed 10-, 15-, and 30-second encoders.
+        private const val FLUID_QNN_10S_CHUNK_SAMPLES = SAMPLE_RATE * 10
+        private const val FLUID_QNN_15S_CHUNK_SAMPLES = SAMPLE_RATE * 15
+        private const val FLUID_QNN_30S_CHUNK_SAMPLES = SAMPLE_RATE * 30
         // NeMo's 1120 ms encoder needs a complete final chunk plus right context.
         // Padding is decoder-only; captured/history PCM is never modified.
         private const val NEMOTRON_LEFT_PADDING_SAMPLES = SAMPLE_RATE / 2
@@ -66,6 +68,8 @@ class SpeechEngine private constructor(private val context: Context) {
         fun onState(state: String)
         /** Unvalidated, replaceable full-text hypothesis for a remote PCM stream only. */
         fun onPartial(text: String) {}
+        /** History only: filter time is null when no filter was applied. */
+        fun onHistoryTimings(filterNanos: Long?, modelNanos: Long) {}
         // Called only after capture, final decode, native-lock and coroutine cleanup finish.
         // Both values are null when cancelled. Empty speech is reported as an error.
         fun onFinished(text: String?, error: String?)
@@ -85,6 +89,9 @@ class SpeechEngine private constructor(private val context: Context) {
         lateinit var decoderConfig: DecoderConfig
         var advancedLocale: Locale? = null
         var previewEnabled = false
+        var fluidHighPassEnabled = false
+        var highPassNanos: Long? = null
+        var historyModelNanos: Long? = null
         // Accessed only on the main thread.
         var publishedPreview = ""
         @Volatile var advancedJob: Job? = null
@@ -173,8 +180,19 @@ class SpeechEngine private constructor(private val context: Context) {
         get() = prefs.selectedModelId != AppPreferences.MODEL_MLKIT_ADVANCED &&
             supportsPreview(ModelInfo.getModelById(prefs.selectedModelId))
 
+    private fun isFluidQnn(model: ModelInfo): Boolean =
+        model.id == ModelInfo.FLUID_SPEECH_PRO_QNN.id || model.id == ModelInfo.FLUID_SPEECH_PRO_QNN_15S.id ||
+            model.id == ModelInfo.FLUID_SPEECH_PRO_QNN_30S.id
+
+    private fun fluidChunkSamples(model: ModelInfo): Int = when (model.id) {
+        ModelInfo.FLUID_SPEECH_PRO_QNN.id -> FLUID_QNN_10S_CHUNK_SAMPLES
+        ModelInfo.FLUID_SPEECH_PRO_QNN_15S.id -> FLUID_QNN_15S_CHUNK_SAMPLES
+        ModelInfo.FLUID_SPEECH_PRO_QNN_30S.id -> FLUID_QNN_30S_CHUNK_SAMPLES
+        else -> FLUID_CHUNK_SAMPLES
+    }
+
     private fun supportsPreview(model: ModelInfo): Boolean = model.streaming ||
-        model.id == ModelInfo.FLUID_SPEECH_PRO.id || model.id == ModelInfo.FLUID_SPEECH_PRO_QNN.id
+        model.id == ModelInfo.FLUID_SPEECH_PRO.id || isFluidQnn(model)
 
     fun isModelReady(): Boolean =
         prefs.selectedModelId != AppPreferences.MODEL_MLKIT_ADVANCED &&
@@ -254,6 +272,9 @@ class SpeechEngine private constructor(private val context: Context) {
         )
         current.preferredMicrophone = prefs.preferredMicrophone
         current.nemotronLanguage = prefs.nemotronLanguage
+        current.fluidHighPassEnabled = prefs.fluidHighPassEnabled &&
+            (current.decoderConfig.model.id == ModelInfo.FLUID_SPEECH_PRO.id || isFluidQnn(current.decoderConfig.model)) &&
+            current.advancedLocale == null
         session = current
         // Keep the control active during mic startup, but expose a distinct not-yet-recording state.
         setState(!hasCompletedAudio, true, if (hasCompletedAudio) "loading" else "starting")
@@ -299,6 +320,8 @@ class SpeechEngine private constructor(private val context: Context) {
                     }
                     if (!current.cancelled && prefs.serviceEnabled && completedSamples.isNotEmpty()) {
                         setState(false, true, "loading")
+                        val historyModelStart = if (current.historyAudioInputFileName != null)
+                            SystemClock.elapsedRealtimeNanos() else null
                         current.text = if (current.advancedLocale != null) {
                             snapshotFinalizationSettings(current)
                             decodeAdvanced(completedSamples, current)
@@ -317,6 +340,10 @@ class SpeechEngine private constructor(private val context: Context) {
                                     decodeOnline(completedSamples, current)
                                 }
                             }
+                        }
+                        if (historyModelStart != null) {
+                            current.historyModelNanos = (SystemClock.elapsedRealtimeNanos() - historyModelStart -
+                                (current.highPassNanos ?: 0L)).coerceAtLeast(0L)
                         }
                     }
                     completedSamples
@@ -453,8 +480,12 @@ class SpeechEngine private constructor(private val context: Context) {
                         if (current.historyAudioInputFileName == null) {
                             prefs.addHistoryItem(text, current.historyAudioFileName)
                         }
-                        if (current.listener != null) current.listener.onFinished(text, null)
-                        else onFinalResult?.invoke(text)
+                        if (current.listener != null) {
+                            current.historyModelNanos?.let {
+                                current.listener.onHistoryTimings(current.highPassNanos, it)
+                            }
+                            current.listener.onFinished(text, null)
+                        } else onFinalResult?.invoke(text)
                     } else {
                         HistoryAudioStore.delete(context, current.historyAudioFileName)
                         if (current.listener != null) {
@@ -650,7 +681,7 @@ class SpeechEngine private constructor(private val context: Context) {
 
     /** Called under nativeLock; preview and final decoding share one offline model. */
     private fun initializeFluid(config: DecoderConfig) {
-        val useQnn = config.model.id == ModelInfo.FLUID_SPEECH_PRO_QNN.id
+        val useQnn = isFluidQnn(config.model)
         if (offlineRecognizer == null || loadedDecoderConfig != config) {
             releaseNative()
             val model = config.model
@@ -707,13 +738,18 @@ class SpeechEngine private constructor(private val context: Context) {
         }
     }
 
-    /** VAD only selects boundaries; every original sample goes to exactly one decoder chunk. */
+    /** VAD only selects boundaries; every sample goes to exactly one decoder chunk. */
     private suspend fun decodeFluid(samples: FloatArray, current: Session): String =
         withContext(Dispatchers.Default) {
+            val decoderSamples = if (current.fluidHighPassEnabled) {
+                val start = SystemClock.elapsedRealtimeNanos()
+                val filtered = FluidHighPassFilter.apply(samples) { current.cancelled || !prefs.serviceEnabled }
+                current.highPassNanos = SystemClock.elapsedRealtimeNanos() - start
+                filtered ?: return@withContext ""
+            } else samples
             nativeLock.withLock {
                 if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
                 val config = current.decoderConfig
-                val useQnn = config.model.id == ModelInfo.FLUID_SPEECH_PRO_QNN.id
                 initializeFluid(config)
                 if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
                 withContext(Dispatchers.Main) {
@@ -722,7 +758,7 @@ class SpeechEngine private constructor(private val context: Context) {
                 val engine = checkNotNull(offlineRecognizer)
                 val parts = mutableListOf<String>()
                 var offset = 0
-                val chunkSamples = if (useQnn) FLUID_QNN_CHUNK_SAMPLES else FLUID_CHUNK_SAMPLES
+                val chunkSamples = fluidChunkSamples(config.model)
                 val ends = try {
                     FluidVad.boundaries(samples, chunkSamples, context) { current.cancelled || !prefs.serviceEnabled }
                 } catch (e: Exception) {
@@ -736,7 +772,7 @@ class SpeechEngine private constructor(private val context: Context) {
                     if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
                     val stream = engine.createStream()
                     try {
-                        stream.acceptWaveform(samples.copyOfRange(offset, end), SAMPLE_RATE)
+                        stream.acceptWaveform(decoderSamples.copyOfRange(offset, end), SAMPLE_RATE)
                         engine.decode(stream)
                         if (current.cancelled || !prefs.serviceEnabled) return@withLock ""
                         engine.getResult(stream).text.trim().takeIf { it.isNotEmpty() }?.let(parts::add)
@@ -767,8 +803,7 @@ class SpeechEngine private constructor(private val context: Context) {
             FluidPreview(
                 STREAM_CHUNK_SAMPLES,
                 if (current.remotePcm) (MAX_REMOTE_PCM_BYTES / 2).toInt() else MAX_LIVE_SAMPLES,
-                if (current.decoderConfig.model.id == ModelInfo.FLUID_SPEECH_PRO_QNN.id)
-                    FLUID_QNN_CHUNK_SAMPLES else FLUID_CHUNK_SAMPLES,
+                fluidChunkSamples(current.decoderConfig.model),
                 SAMPLE_RATE * 2
             )
         } catch (e: Exception) {
