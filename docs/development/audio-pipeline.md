@@ -4,6 +4,8 @@
 
 ## Streaming and stop
 
+Before changing preprocessing, inspect the capture and model frontends; Android may already process microphone audio. Preserve captured PCM separately and filter the full final waveform before chunking, or carry filter state between streaming blocks. Compare filtered and original recordings before claiming an accuracy gain. Verify the selected VAD asset and native API match, and distinguish detector unavailability from silence. Report reprocessing timings with a monotonic clock and label setup, VAD and other overhead.
+
 For Nemotron, use one online stream for a whole live session or saved file. Feed all PCM, pauses included, in 200 ms blocks on a separate worker; snapshot the active model per session. Flush a shorter final block without waiting for it to fill. The feed block size is distinct from the model's chunk size. When explicitly enabled, local dictation may display interim hypotheses in its separate two-line overlay. Remote PCM can also deliver replaceable unvalidated PARTIAL IPC previews to its owner; local live and file IPC cannot. At Stop snapshot final text settings, drain backlog, feed finalization silence separately from saved PCM, signal `inputFinished`, drain ready frames and return one final result without a second full-file decode. InputFinished alone cannot necessarily flush incomplete NeMo encoder chunks. Cancel skips finalization and result but waits for native ownership to be safely released. A slow device can make Stop wait for backlog; no latency or quality guarantee follows from host checks.
 
 For Nemotron, remote PCM uses the same online worker, without AudioRecord. An IO reader preserves

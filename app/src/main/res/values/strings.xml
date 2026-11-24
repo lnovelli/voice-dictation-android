@@ -105,7 +105,7 @@
     <string name="overlay_opacity_label">Overlay button opacity</string>
     <string name="overlay_scale_title">Floating icon size</string>
     <string name="overlay_scale_label">Floating icon size: %1$d%%</string>
-    <string name="overlay_scale_hint">50–150% of the original size. Changes apply immediately. Drag partly beyond any screen edge; a small part stays reachable.</string>
+    <string name="overlay_scale_hint">50–150% of the original size. Changes apply immediately. Long-press and move to reposition; the button stays within reach of its swipe actions.</string>
     <string name="avoid_autofill_collision_title">Avoid autofill overlay collisions</string>
     <string name="avoid_autofill_collision_hint">Temporarily hide the floating button when an autofill popup or another app/system window is over the focused text field.</string>
     <string name="always_show_overlay_title">Keep button visible while unlocked</string>

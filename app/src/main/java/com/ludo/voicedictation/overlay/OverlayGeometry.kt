@@ -13,7 +13,24 @@ internal object OverlayGeometry {
         (dp * density * scalePercent.coerceIn(MIN_SCALE, MAX_SCALE) / 100f)
             .roundToInt().coerceAtLeast(1)
 
-    /** Allow the circle off either edge, but retain a usable sliver of the actual button. */
+    /** Geometry for targets in usable screen coordinates. */
+    data class Targets(val radius: Int, val distance: Int) {
+        fun minimumY(top: Int) = top + distance + radius
+        fun maximumY(bottom: Int) = bottom - distance - radius
+    }
+
+    /** Shrink cues on constrained screens. The horizontal cue faces inward. */
+    fun targets(width: Int, height: Int, window: Int, density: Float, scale: Int): Targets? {
+        val gap = (8 * density).roundToInt().coerceAtLeast(1)
+        val wantedRadius = maxOf((22 * density).roundToInt(), pixels(22, density, scale))
+        val minRadius = (20 * density).roundToInt().coerceAtLeast(1)
+        val radius = minOf(wantedRadius, (width - window - 2 * gap) / 4,
+            (height - window - 2 * gap) / 4)
+        if (radius < minRadius) return null
+        return Targets(radius, window / 2 + radius + gap)
+    }
+
+    /** Retained for old geometry consumers; the overlay now uses full target bounds. */
     fun clampAxis(position: Int, screenSize: Int, windowSize: Int, buttonSize: Int, density: Float): Int {
         val margin = (windowSize - buttonSize) / 2
         // Retain at least one third per axis so even a corner remains grabbable.

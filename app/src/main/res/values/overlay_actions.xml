@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="overlay_action_microphone" type="id" />
+    <item name="overlay_action_hide" type="id" />
+    <item name="overlay_action_discard" type="id" />
+    <item name="overlay_action_move_up" type="id" />
+    <item name="overlay_action_move_down" type="id" />
+    <item name="overlay_action_move_left" type="id" />
+    <item name="overlay_action_move_right" type="id" />
+</resources>

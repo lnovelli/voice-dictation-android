@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -115,6 +116,12 @@ class SpeechEngine private constructor(private val context: Context) {
         @Volatile var stopDrainTimeout: Runnable? = null
         @Volatile var vadActive = false
         @Volatile var vadCaptureEnded = false
+        // Route fields are protected by recorderLock, except the published value (Main only).
+        var localMicrophoneTrackingEnded = false
+        var localMicrophoneCaptureActive = false
+        var localMicrophoneDeviceId: Int? = null
+        var localMicrophoneRouteGeneration = 0L
+        var publishedLocalMicrophoneDeviceId: Int? = null
 
         @Synchronized fun closeAudioFile() { runCatching { audioFile?.close() } }
     }
@@ -133,6 +140,18 @@ class SpeechEngine private constructor(private val context: Context) {
         it.owner != null && it.owner !== historyReprocessOwnerMarker
     } == true
     val isLocalSessionActive: Boolean get() = session?.let { it.owner == null && !it.cancelled } == true
+    /** Identity remains stable through local processing; cancelled and external sessions have none. */
+    internal val localSessionIdentity: Any?
+        get() = session?.takeIf { it.owner == null && !it.cancelled }
+    /** Actual route only, after a successful read; never a saved preference. */
+    internal val activeLocalMicrophoneDeviceId: Int?
+        get() {
+            val current = session ?: return null
+            return synchronized(recorderLock) {
+                if (session === current && current.owner == null && !current.stopped && !current.cancelled &&
+                    current.localMicrophoneCaptureActive) current.localMicrophoneDeviceId else null
+            }
+        }
     val isBusy: Boolean get() = session != null || sessionJob?.isActive == true || releaseJob?.isActive == true
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -150,7 +169,7 @@ class SpeechEngine private constructor(private val context: Context) {
     private var stringReplacer = CustomStringReplacer(emptyList())
     private var staticNumericCorrector: StaticNumericCorrector? = null
     private var recorder: AudioRecord? = null
-    private var session: Session? = null
+    @Volatile private var session: Session? = null
     private var sessionJob: Job? = null
     private var releaseJob: Job? = null
     private val historyReprocessOwnerMarker = Any()
@@ -172,6 +191,8 @@ class SpeechEngine private constructor(private val context: Context) {
     var onPreviewTextChanged: ((String) -> Unit)? = null
     /** Main-thread live Fluid VAD only: null means inactive or unavailable. */
     var onVadStateChanged: ((Boolean?) -> Unit)? = null
+    /** Local route snapshot changed; delivered on Main for the exact current session. */
+    internal var onActiveLocalMicrophoneDeviceChanged: (() -> Unit)? = null
     var currentVadSpeaking: Boolean? = null
         private set
 
@@ -964,6 +985,35 @@ class SpeechEngine private constructor(private val context: Context) {
         setVad(null)
     }
 
+    // Coalesce route changes while Main is busy. Generation and session checks prevent
+    // a queued observation from reviving a stopped recorder or a later session's route.
+    private fun postLocalMicrophoneRouteChanged(current: Session, generation: Long) {
+        mainHandler.post {
+            if (session !== current) return@post
+            val value = synchronized(recorderLock) {
+                if (current.localMicrophoneRouteGeneration != generation) return@post
+                if (current.localMicrophoneCaptureActive && !current.stopped && !current.cancelled)
+                    current.localMicrophoneDeviceId else null
+            }
+            if (current.publishedLocalMicrophoneDeviceId != value) {
+                current.publishedLocalMicrophoneDeviceId = value
+                onActiveLocalMicrophoneDeviceChanged?.invoke()
+            }
+        }
+    }
+
+    private fun clearLocalMicrophoneRoute(current: Session) {
+        if (current.owner != null) return
+        val generation = synchronized(recorderLock) {
+            // Prevent a concurrent startup from re-enabling tracking after Stop/Cancel.
+            current.localMicrophoneTrackingEnded = true
+            current.localMicrophoneCaptureActive = false
+            current.localMicrophoneDeviceId = null
+            ++current.localMicrophoneRouteGeneration
+        }
+        postLocalMicrophoneRouteChanged(current, generation)
+    }
+
     /** Keep raw PCM capture separate from the streaming decoder. */
     private suspend fun captureAndTranscribeStreaming(current: Session): StreamingCaptureResult =
         withContext(Dispatchers.Default) {
@@ -1141,9 +1191,8 @@ class SpeechEngine private constructor(private val context: Context) {
             val preferredDevice = current.preferredMicrophone?.let { MicrophoneDevices.resolve(context, it) }
             var routeWarningSent = false
             var nextRouteCheck = 0L
-            fun checkPreferredRoute() {
+            fun checkPreferredRoute(routed: AudioDeviceInfo?) {
                 if (preferredDevice == null || current.stopped || current.cancelled) return
-                val routed = audio.routedDevice
                 if (routed == null) {
                     if (!routeWarningSent) {
                         routeWarningSent = true
@@ -1174,6 +1223,9 @@ class SpeechEngine private constructor(private val context: Context) {
                     audio.startRecording()
                     check(audio.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Microphone did not start." }
                     recorder = audio
+                    if (current.owner == null && !current.localMicrophoneTrackingEnded) {
+                        current.localMicrophoneCaptureActive = true
+                    }
                     // Check after capture delivers its first buffer: an immediate routing query
                     // may run before Android has settled the newly started input route.
                 }
@@ -1196,12 +1248,33 @@ class SpeechEngine private constructor(private val context: Context) {
                     audio.read(recording, count, requested, AudioRecord.READ_BLOCKING)
                 }
                 if (read > 0) {
-                    if (preferredDevice != null && SystemClock.elapsedRealtime() >= nextRouteCheck) {
+                    if ((preferredDevice != null || current.owner == null) &&
+                        SystemClock.elapsedRealtime() >= nextRouteCheck) {
                         nextRouteCheck = SystemClock.elapsedRealtime() + 1000L
-                        checkPreferredRoute()
+                        val generation = synchronized(recorderLock) {
+                            if (recorder !== audio || current.stopped || current.cancelled) {
+                                null
+                            } else {
+                                // Query only after a successful read and while the recorder is
+                                // still owned. An unavailable default route is not a capture error.
+                                val routed = if (preferredDevice != null) audio.routedDevice else try {
+                                    audio.routedDevice
+                                } catch (_: Exception) { null }
+                                checkPreferredRoute(routed)
+                                if (current.owner == null && current.localMicrophoneCaptureActive &&
+                                    current.localMicrophoneDeviceId != routed?.id) {
+                                    current.localMicrophoneDeviceId = routed?.id
+                                    ++current.localMicrophoneRouteGeneration
+                                } else null
+                            }
+                        }
+                        generation?.let { postLocalMicrophoneRouteChanged(current, it) }
                     }
                     val readStart = count
                     count += read
+                    // At the cap, stop reporting an active route before any suspendable
+                    // chunk delivery; the recorder is released in the finally block.
+                    if (count == recording.size) clearLocalMicrophoneRoute(current)
                     if (!current.cancelled) {
                         var sourceOffset = readStart
                         while (sourceOffset < count) {
@@ -1225,6 +1298,7 @@ class SpeechEngine private constructor(private val context: Context) {
             }
         } finally {
             // Release the microphone BEFORE waiting at the cap or initializing native ASR.
+            clearLocalMicrophoneRoute(current)
             current.vadCaptureEnded = true
             current.vadActive = false
             postVadUnavailable(current)
@@ -1370,6 +1444,7 @@ class SpeechEngine private constructor(private val context: Context) {
     }
 
     private fun stopSession(current: Session) {
+        clearLocalMicrophoneRoute(current)
         clearVad(current)
         if (current.cancelled) {
             current.closeAudioFile()
