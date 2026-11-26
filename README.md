@@ -6,9 +6,9 @@ Voice Dictation brings seamless system-wide voice input to any text field across
 
 ---
 
-## Current release: v1.2.50 (build 84; ARM64-only)
+## Current release: v1.2.51 (build 90; ARM64-only)
 
-Adds Fluid Speech Pro CPU and experimental Snapdragon 8 Elite NPU recognition, optional Fluid live previews and an optional 80 Hz high-pass filter for final recognition. History reprocessing reports filter and model processing times. The 15-second NPU model and high-pass recognition accuracy have not been tested on a device. Device behavior and recognition accuracy depend on the app and device; backup and restore depend on Android's transport.
+Improves floating-button gestures and focused-editor detection, and extends History retention to 0–500 entries with confirmation before deleting stored entries. Focus detection, gestures and retention behavior have not been verified on a device. Device behavior and recognition accuracy depend on the app and device; backup and restore depend on Android's transport.
 
 Settings JSON is unencrypted and may contain private vocabulary, endpoints and prompts. It excludes transcript history, audio, downloaded models and system permissions. Android cloud backup may include settings and transcript history, but excludes models and saved audio.
 
