@@ -424,7 +424,7 @@ class SpeechEngine private constructor(private val context: Context) {
                             current.text = correctedText
                         }
                         if (!current.cancelled && prefs.serviceEnabled && !current.text.isNullOrBlank() &&
-                            current.historyAudioInputFileName == null) {
+                            current.historyAudioInputFileName == null && prefs.historyLimit > 0) {
                             val savedAudioFileName = withContext(Dispatchers.IO) {
                                 HistoryAudioStore.save(context, samples)
                             }

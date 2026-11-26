@@ -49,6 +49,17 @@ class DictationAccessibilityService : AccessibilityService() {
     private var inputEditorPackage: String? = null
     private var inputStartedAt: Long? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var fallbackEditor: AccessibilityNodeInfo? = null
+    private val focusedEditorSearch by lazy {
+        FocusedEditorSearch(this, mainHandler, ::isFallbackWindowCurrent, ::onFocusedEditorSearchResult)
+    }
+    private val focusDiagnosticsProbe by lazy {
+        FocusDiagnosticsProbe(this, mainHandler) { owner, windowId ->
+            val root = rootInActiveWindow
+            inputEditorActive && inputEditorPackage == owner && prefs.serviceEnabled && isScreenUsable() &&
+                root?.windowId == windowId && root.packageName?.toString() == owner
+        }
+    }
     private data class ConfirmedEditor(val packageName: String, val windowId: Int, val at: Long)
     private var confirmedEditor: ConfirmedEditor? = null
     // Keep only an ephemeral identity fingerprint, never the node or its contents. A hash
@@ -99,6 +110,8 @@ class DictationAccessibilityService : AccessibilityService() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
+                    resetFocusedEditorFallback()
+                    focusDiagnosticsProbe.invalidate()
                     sessionTargetNode = null
                     focusedEventEditor = null
                     inputEditorActive = false
@@ -154,11 +167,18 @@ class DictationAccessibilityService : AccessibilityService() {
     override fun onCreateInputMethod(): InputMethod =
         object : InputMethod(this@DictationAccessibilityService) {
             override fun onStartInput(attribute: EditorInfo, restarting: Boolean) {
+                resetFocusedEditorFallback()
+                focusDiagnosticsProbe.invalidate()
                 clearFocusGrace() // A new or restarted connection must be independently confirmed.
                 if (restarting) focusedEventEditor = null
                 inputEditorActive = true
                 inputEditorPackage = attribute.packageName?.toString()
                 inputStartedAt = SystemClock.uptimeMillis()
+                OverlayDiagnostics.record {
+                    "Input editor: ${if (restarting) "restart" else "start"}" +
+                        " inputCategory=${OverlayDiagnostics.inputCategory(attribute.inputType)}" +
+                        " package=${OverlayDiagnostics.packageName(this@DictationAccessibilityService, attribute.packageName)}"
+                }
                 mainHandler.removeCallbacks(reconcileAfterInputFinish)
                 refreshServiceState { mapOf((if (restarting) "input-restart" else "input-start") to 1L) }
                 // Input callbacks and the accessibility tree can arrive in either order.
@@ -167,6 +187,8 @@ class DictationAccessibilityService : AccessibilityService() {
             }
 
             override fun onFinishInput() {
+                resetFocusedEditorFallback()
+                focusDiagnosticsProbe.invalidate()
                 inputEditorActive = false
                 inputEditorPackage = null
                 inputStartedAt = null
@@ -184,10 +206,23 @@ class DictationAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED ||
+            event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+            OverlayDiagnostics.record(coalesce = true) {
+                val type = if (event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) "focused" else "clicked"
+                "Event source: type=$type windowId=${event.windowId}" +
+                    " package=${OverlayDiagnostics.packageName(this, event.packageName)}" +
+                    " ${OverlayDiagnostics.node(this, event.source)}"
+            }
+        }
         if (!prefs.serviceEnabled) {
             clearFocusGrace()
             return
         }
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED ||
+            event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED ||
+            event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) focusedEditorSearch.invalidate()
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) clearFocusGrace()
         if (editorSuppressed && event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
@@ -211,7 +246,7 @@ class DictationAccessibilityService : AccessibilityService() {
             return
         }
         if (!prefs.avoidAutofillOverlayCollisions) systemUiSuppressingOverlay = false
-        val activeInput = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        val activeInput = resolveCurrentInput(rootInActiveWindow)
         val editorPackage = (if (isFocusedEditableNode(activeInput)) activeInput?.packageName else null)
             ?.toString() ?: inputEditorPackage
 
@@ -358,6 +393,8 @@ class DictationAccessibilityService : AccessibilityService() {
         if (!prefs.avoidAutofillOverlayCollisions) systemUiSuppressingOverlay = false
         val serviceEnabled = prefs.serviceEnabled
         if (!serviceEnabled || !isScreenUsable()) {
+            resetFocusedEditorFallback()
+            focusDiagnosticsProbe.invalidate()
             val reason = if (!serviceEnabled) "disabled" else "locked or screen off"
             inputEditorActive = false
             inputEditorPackage = null
@@ -378,7 +415,7 @@ class DictationAccessibilityService : AccessibilityService() {
             overlayManager.show()
             recordDecision(trigger, "show", "always visible")
         } else if (prefs.avoidAutofillOverlayCollisions &&
-            (rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            (resolveCurrentInput(rootInActiveWindow)
                 ?.takeIf(::isFocusedEditableNode)?.packageName?.toString()
                 ?: inputEditorPackage)
                 ?.let(::hasCompetingWindow) == true) {
@@ -394,7 +431,7 @@ class DictationAccessibilityService : AccessibilityService() {
                 recordDecision(trigger, "hide temporarily", "competing-window")
             } else {
                 systemUiSuppressingOverlay = false
-                handleFocusEvent(rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT), trigger)
+                handleFocusEvent(resolveCurrentInput(rootInActiveWindow), trigger)
             }
         } else if (SpeechEngine.getInstance(this).isExternalSessionActive) {
             clearFocusGrace()
@@ -403,7 +440,7 @@ class DictationAccessibilityService : AccessibilityService() {
             overlayManager.show()
             recordDecision(trigger, "show", "external session active")
         } else {
-            handleFocusEvent(rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT), trigger)
+            handleFocusEvent(resolveCurrentInput(rootInActiveWindow), trigger)
         }
     }
 
@@ -422,7 +459,8 @@ class DictationAccessibilityService : AccessibilityService() {
         // Some providers omit the window from the interactive windows list.
         val applicationWindow = root != null &&
             (window == null || window.type == AccessibilityWindowInfo.TYPE_APPLICATION)
-        val (eligibleEditor, reason) = editorEligibility(root, node, applicationWindow)
+        val (eligibleEditor, baseReason) = editorEligibility(root, node, applicationWindow)
+        val reason = if (eligibleEditor && node === fallbackEditor) "focused editor found in tree" else baseReason
         if (editorSuppressed && !speechEngine.isLocalSessionActive && !speechEngine.isExternalSessionActive) {
             val current = if (eligibleEditor) editorIdentity(root, node, window, currentWindows) else null
             val hidden = suppressedEditor
@@ -458,7 +496,7 @@ class DictationAccessibilityService : AccessibilityService() {
         val now = SystemClock.uptimeMillis()
         if (eligibleEditor) {
             // Only a focused, eligible editor in this input connection can seed grace.
-            // Never retain an AccessibilityNodeInfo as evidence or as an insertion target.
+            // Grace stores only its package/window/time, not the node.
             clearFocusGrace()
             val rootPackage = root?.packageName?.toString()
             if (inputEditorActive && !inputEditorPackage.isNullOrBlank() &&
@@ -486,6 +524,14 @@ class DictationAccessibilityService : AccessibilityService() {
             clearFocusGrace()
             overlayManager.hide()
             recordFocusDecision(trigger, "hide", reason, root, node, window)
+            val owner = inputEditorPackage
+            if (inputEditorActive && applicationWindow && root != null && !owner.isNullOrBlank() &&
+                root.packageName?.toString() == owner) {
+                try { focusDiagnosticsProbe.request(owner, root.windowId) } catch (_: Exception) { /* Observational only. */ }
+                if (node == null || !node.isFocused) {
+                    try { focusedEditorSearch.request(owner, root.windowId) } catch (_: Exception) { /* Keep hidden. */ }
+                }
+            }
         } else {
             clearFocusGrace()
             recordFocusDecision(trigger, "keep current", "session active; focus=$reason", root, node, window)
@@ -509,6 +555,67 @@ class DictationAccessibilityService : AccessibilityService() {
             return false to "session mismatch or no eligible editor"
         }
         return false to "no eligible editor"
+    }
+
+    @Suppress("DEPRECATION")
+    private fun clearFallbackEditor() {
+        fallbackEditor?.recycle()
+        fallbackEditor = null
+    }
+
+    private fun resetFocusedEditorFallback() {
+        focusedEditorSearch.invalidate()
+        clearFallbackEditor()
+    }
+
+    /** A session package alone cannot establish that its editor owns the active window. */
+    private fun isFallbackWindowCurrent(owner: String, windowId: Int): Boolean = try {
+        if (!prefs.serviceEnabled || !isScreenUsable() || !inputEditorActive || inputEditorPackage != owner) false
+        else {
+            val root = rootInActiveWindow
+            val currentWindows = windows
+            val window = currentWindows.firstOrNull { it.id == windowId }
+            root != null && root.windowId == windowId && root.packageName?.toString() == owner &&
+                observableApplicationFocus(root, null, window, currentWindows)
+        }
+    } catch (_: Exception) { false }
+
+    private fun isCurrentFallback(node: AccessibilityNodeInfo, root: AccessibilityNodeInfo): Boolean = try {
+        val owner = inputEditorPackage
+        !owner.isNullOrBlank() && isFallbackWindowCurrent(owner, root.windowId) &&
+            root.packageName?.toString() == owner && node.refresh() &&
+            node.windowId == root.windowId && node.packageName?.toString() == owner &&
+            node.isVisibleToUser && editorEligibility(root, node, true).first
+    } catch (_: Exception) { false }
+
+    /** Prefer a genuinely focused primary node; only use the scanned editor after revalidation. */
+    private fun resolveCurrentInput(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        val primary = root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (primary?.isFocused == true) {
+            clearFallbackEditor()
+            return primary
+        }
+        val fallback = fallbackEditor
+        if (root != null && fallback != null && isCurrentFallback(fallback, root)) return fallback
+        if (fallback != null) clearFallbackEditor()
+        return primary
+    }
+
+    /** A scan result is only evidence after fresh checks on Main, not insertion authority. */
+    @Suppress("DEPRECATION")
+    private fun onFocusedEditorSearchResult(owner: String, windowId: Int, candidate: AccessibilityNodeInfo?) {
+        if (!isFallbackWindowCurrent(owner, windowId)) return
+        val root = rootInActiveWindow ?: return
+        if (root.windowId != windowId || root.packageName?.toString() != owner) return
+        val primary = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (primary?.isFocused == true) {
+            clearFallbackEditor()
+        } else if (candidate != null && isCurrentFallback(candidate, root)) {
+            clearFallbackEditor()
+            fallbackEditor = AccessibilityNodeInfo.obtain(candidate)
+        }
+        // Traversal can also make a previously missing primary focus available.
+        refreshServiceState { mapOf("focused-editor-search" to 1L) }
     }
 
     /** A missing interactive-window record is allowed when rootInActiveWindow identifies the app. */
@@ -561,7 +668,7 @@ class DictationAccessibilityService : AccessibilityService() {
 
         suppressedEditor = try {
             val root = rootInActiveWindow
-            val node = root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            val node = resolveCurrentInput(root)
             val currentWindows = windows
             val window = root?.let { active -> currentWindows.firstOrNull { it.id == active.windowId } }
             val applicationWindow = root != null &&
@@ -622,7 +729,7 @@ class DictationAccessibilityService : AccessibilityService() {
 
     private fun captureInsertionTarget() {
         sessionTargetNode = null
-        val active = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        val active = resolveCurrentInput(rootInActiveWindow)
         // Only the actual input-focused node is a valid insertion target. A remembered node
         // can be stale after focus moves, so an absent active editor means clipboard delivery.
         val target = active?.takeIf(::isInsertionEditor)
@@ -681,7 +788,7 @@ class DictationAccessibilityService : AccessibilityService() {
         if (!target.refresh() || !isInsertionEditor(target)) return false
         val root = rootInActiveWindow ?: return false
         if (root.windowId != target.windowId) return false
-        val active = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
+        val active = resolveCurrentInput(root) ?: return false
         return isInsertionEditor(active) && active == target
     }
 
@@ -702,6 +809,8 @@ class DictationAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
+        resetFocusedEditorFallback()
+        focusDiagnosticsProbe.invalidate()
         OverlayDiagnostics.record { "service interrupted" }
         Log.w(TAG, "DictationAccessibilityService interrupted")
         sessionTargetNode = null
@@ -721,6 +830,9 @@ class DictationAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        clearFallbackEditor()
+        focusedEditorSearch.close()
+        focusDiagnosticsProbe.close()
         OverlayDiagnostics.record { "service destroyed" }
         clearEditorSuppression()
         inputEditorActive = false

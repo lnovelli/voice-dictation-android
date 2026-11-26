@@ -59,6 +59,7 @@ import java.util.Locale
 
 class SettingsFragment : Fragment() {
 
+    private var historyLimitDialog: android.app.Dialog? = null
     private var _binding: TabSettingsBinding? = null
     private val binding get() = _binding!!
 
@@ -212,6 +213,12 @@ class SettingsFragment : Fragment() {
             // silently apply settings after its screen has gone away.
             val result = if (text == null) -1 else try {
                 if (AppPreferences(context).importSettingsJson(text)) 1 else 0
+            } catch (e: IllegalArgumentException) {
+                if (e.message?.startsWith("Imported history limit") == true) {
+                    Toast.makeText(context, e.message, Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+                -1
             } catch (_: Exception) {
                 -1
             }
@@ -803,13 +810,65 @@ class SettingsFragment : Fragment() {
             updateAsrThreadsLabel(count)
         }
 
-        // Retention limit
-        binding.sliderHistoryLimit.value = prefs.historyLimit.toFloat()
-        binding.tvHistoryLimitLabel.text = "History retention limit: ${prefs.historyLimit} transcriptions"
-        binding.sliderHistoryLimit.addOnChangeListener { _, value, _ ->
-            val limit = value.toInt()
-            prefs.historyLimit = limit
-            binding.tvHistoryLimitLabel.text = "History retention limit: $limit transcriptions"
+        // Legacy limits remain in force until the user chooses a new slider value.
+        val historySlider = binding.sliderHistoryLimit
+        val historyLabel = binding.tvHistoryLimitLabel
+        fun showHistoryLimit(limit: Int) {
+            val label = when {
+                limit == 0 -> "History retention limit: 0 (no history)"
+                limit % 20 != 0 -> "History retention limit: $limit transcriptions (legacy; move slider to change)"
+                else -> "History retention limit: $limit transcriptions"
+            }
+            historyLabel.text = label
+            historySlider.contentDescription = label
+        }
+        fun restoreHistorySlider() {
+            val current = prefs.historyLimit
+            historySlider.value = (((current + 19) / 20) * 20).coerceIn(0, 500).toFloat()
+            showHistoryLimit(current)
+        }
+        fun selectHistoryLimit(limit: Int) {
+            if (limit == prefs.historyLimit) {
+                restoreHistorySlider()
+                return
+            }
+            if (limit < prefs.getHistory().size) {
+                historyLimitDialog = MaterialAlertDialogBuilder(requireContext())
+                    .setTitle("Reduce history retention?")
+                    .setMessage("This will delete existing history entries beyond the new limit, including their saved audio. The oldest entries will be deleted.")
+                    .setPositiveButton("Delete and confirm") { _, _ ->
+                        if (_binding != null && isAdded) prefs.applyHistoryLimit(limit)
+                    }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setOnDismissListener {
+                        historyLimitDialog = null
+                        restoreHistorySlider()
+                    }
+                    .show()
+            } else {
+                prefs.applyHistoryLimit(limit)
+                restoreHistorySlider()
+            }
+        }
+        restoreHistorySlider()
+        var draggingHistorySlider = false
+        var historySliderChanged = false
+        historySlider.addOnSliderTouchListener(object : com.google.android.material.slider.Slider.OnSliderTouchListener {
+            override fun onStartTrackingTouch(slider: com.google.android.material.slider.Slider) {
+                draggingHistorySlider = true
+                historySliderChanged = false
+            }
+            override fun onStopTrackingTouch(slider: com.google.android.material.slider.Slider) {
+                draggingHistorySlider = false
+                if (historySliderChanged) selectHistoryLimit(slider.value.toInt())
+            }
+        })
+        historySlider.addOnChangeListener { _, value, fromUser ->
+            if (fromUser) {
+                showHistoryLimit(value.toInt())
+                if (draggingHistorySlider) historySliderChanged = true
+                else selectHistoryLimit(value.toInt())
+            }
         }
 
         // Overlay opacity
@@ -981,6 +1040,8 @@ class SettingsFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        historyLimitDialog?.dismiss()
+        historyLimitDialog = null
         ++mlkitCheckGeneration
         mlkitCheckJob?.cancel()
         mlkitCheckJob = null

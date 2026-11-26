@@ -191,7 +191,7 @@ class AppPreferences(context: Context) {
 
 
     var historyLimit: Int
-        get() = prefs.getInt(KEY_HISTORY_LIMIT, 10)
+        get() = prefs.getInt(KEY_HISTORY_LIMIT, 20)
         set(value) = prefs.edit().putInt(KEY_HISTORY_LIMIT, value).apply()
 
     var overlayOpacity: Int
@@ -354,6 +354,19 @@ class AppPreferences(context: Context) {
         } catch (_: Exception) {
         }
         return list
+    }
+
+    /** Call only after the user has confirmed any resulting deletion. */
+    fun applyHistoryLimit(limit: Int) {
+        require(limit in 0..500 && limit % 20 == 0)
+        val current = getHistory()
+        val retained = current.take(limit)
+        val removed = current.drop(limit)
+        historyLimit = limit
+        if (removed.isNotEmpty()) {
+            saveHistory(retained)
+            removed.forEach { HistoryAudioStore.delete(appContext, it.audioFileName) }
+        }
     }
 
     fun addHistoryItem(text: String, audioFileName: String? = null) {

@@ -79,6 +79,18 @@ internal object SettingsBackup {
         require(positionValues.keys.all { it in positionKeys }) { "Unknown position" }
         val validatedPositions = positionValues.mapValues { (_, value) -> intValue(value) }
 
+        // Imports promise not to delete history. Do not silently install a limit that
+        // would evict existing entries on the next transcription; use Settings instead.
+        val newLimit = validated["history_limit"] as? Int ?: 20
+        val oldLimit = prefs.getInt("history_limit", 20)
+        if (newLimit != oldLimit) {
+            val history = prefs.getString("history", null)
+            val count = if (history == null) 0 else JSONArray(history).length()
+            require(newLimit >= count) {
+                "Imported history limit is below the stored entry count; change it in Settings first."
+            }
+        }
+
         // SharedPreferences has no transaction spanning files. Validation is complete before
         // either editor is touched, but a disk failure or crash can split these two commits.
         val editor = prefs.edit()
@@ -109,7 +121,8 @@ internal object SettingsBackup {
             val number = intValue(value)
             val valid = when (key) {
                 "asr_thread_count" -> number in 2..4
-                "history_limit" -> number in 5..50 && number % 5 == 0
+                "history_limit" -> (number in 0..500 && number % 20 == 0) ||
+                    (number in 5..50 && number % 5 == 0)
                 "overlay_opacity" -> number in 40..100 && number % 5 == 0
                 "overlay_scale_percent" -> number in 50..150 && number % 5 == 0
                 "acoustic_max_active_paths" -> number in 2..8

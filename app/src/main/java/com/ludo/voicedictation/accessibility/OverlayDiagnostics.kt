@@ -97,6 +97,7 @@ object OverlayDiagnostics {
             append("Floating button diagnostics — ").append(status).append('\n')
             append("Process-local; max 500 entries, recording stops after 10 minutes. Report remains in memory until cleared, replaced, or process exit. Times are local; +ms is monotonic.\n")
             append("Overlay view state is not proof of actual pixel visibility. App/package metadata may be sensitive.\n")
+            append("Focus probes only observe the tree; provider queries may affect provider caches. Truncated or incomplete results cannot prove absence.\n")
             append("Unverified provider-supplied package names: ")
                 .append(if (includeUnverifiedPackages) "enabled (unverified: prefix); syntax does not prove identity or exclude sensitive data" else "disabled")
                 .append('\n')
@@ -182,6 +183,19 @@ object OverlayDiagnostics {
                     while (entries.size + 1 > LIMIT) { entries.removeFirst(); evictedEntries++ }
                 }
             }
+        } catch (_: Exception) { /* Observational only. */ }
+    }
+
+    /** A delayed probe must not inherit a later recording's consent or generation. */
+    internal fun recordingGeneration(): Long? = session()?.generation
+
+    internal fun recordForGeneration(expected: Long, message: () -> String?) {
+        if (!recording) return
+        try {
+            val current = session() ?: return
+            if (current.generation != expected) return
+            val body = inSession(current, message) ?: return
+            add(current.generation, body, false)
         } catch (_: Exception) { /* Observational only. */ }
     }
 
